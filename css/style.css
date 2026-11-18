@@ -130,3 +130,13 @@ input[type=checkbox] { width: auto; }
 .demo { background: #fff3cd; color: #5a4300; font-size: .85rem; padding: 6px 12px; padding-top: calc(6px + env(safe-area-inset-top)); text-align: center; }
 .demo a { margin-left: 8px; font-weight: 700; }
 .demohint { display: block; line-height: 1.6; }
+
+.inwrap { position: relative; }
+.inwrap input, .inwrap textarea { padding-right: 56px; }
+.mic { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; border-radius: 50%; border: 0; background: #e8edf3; color: var(--brand2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.inwrap.ta .mic { top: 8px; transform: none; }
+.mic.rec { background: var(--bad); color: #fff; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(198,40,40,.25); } }
+.filebtn { position: relative; overflow: hidden; display: inline-flex; align-items: center; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.fname { margin-top: 6px; word-break: break-all; }

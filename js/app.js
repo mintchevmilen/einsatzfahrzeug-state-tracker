@@ -36,15 +36,72 @@ function busy(on) {
   } else if (busyCount === 0 && el) el.remove();
 }
 
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const MIC_SVG =
+  '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>';
+
+let activeRec = null;
+function toggleDictation(btn) {
+  const input = btn.parentElement.querySelector('input,textarea');
+  if (!input) return;
+  if (activeRec) {
+    const same = activeRec.btn === btn;
+    activeRec.rec.stop();
+    if (same) return;
+  }
+  const rec = new SR();
+  rec.lang = 'de-DE';
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+  const base = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
+  rec.onstart = () => btn.classList.add('rec');
+  rec.onresult = (e) => {
+    let t = '';
+    for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+    input.value = base + t.trim();
+  };
+  rec.onerror = (e) => {
+    btn.classList.remove('rec');
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Diktat ist hier nicht erlaubt oder nicht verfügbar. Nutze das Mikrofon der Tastatur.', true);
+    else if (e.error !== 'no-speech' && e.error !== 'aborted') toast('Diktat fehlgeschlagen: ' + e.error, true);
+  };
+  rec.onend = () => {
+    btn.classList.remove('rec');
+    if (activeRec && activeRec.rec === rec) activeRec = null;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  activeRec = { rec, btn };
+  try {
+    rec.start();
+  } catch (e) {
+    activeRec = null;
+  }
+}
+function bindMics(root) {
+  root.querySelectorAll('[data-mic]').forEach((b) => {
+    b.onclick = () => toggleDictation(b);
+  });
+}
+
+export function photoField() {
+  return `<div class="fld"><span>Foto</span><div class="stack">
+    <label class="btn small filebtn">Kamera<input type="file" name="photocam" accept="image/*" capture="environment"></label>
+    <label class="btn small filebtn">Aus Dateien<input type="file" name="photo" accept="image/*"></label>
+  </div><div class="muted fname"></div></div>`;
+}
+
 export function field(label, name, o = {}) {
   const v = o.value ?? '';
   const req = o.required ? 'required' : '';
+  const micOk = Boolean(SR) && !o.nomic && !o.file && (o.textarea || !o.type || o.type === 'text');
+  const mic = micOk ? `<button type="button" class="mic" data-mic aria-label="Diktieren" title="Diktieren">${MIC_SVG}</button>` : '';
   let input;
   if (o.textarea) input = `<textarea name="${name}" rows="3" ${req} placeholder="${esc(o.placeholder || '')}">${esc(v)}</textarea>`;
   else if (o.file) input = `<input type="file" name="${name}" accept="image/*">`;
   else
     input = `<input name="${name}" type="${o.type || 'text'}" value="${esc(v)}" ${req} ${o.attrs || ''} placeholder="${esc(o.placeholder || '')}" autocomplete="${o.autocomplete || 'off'}">`;
-  return `<label class="fld"><span>${esc(label)}</span>${input}</label>`;
+  return `<label class="fld"><span>${esc(label)}</span><div class="inwrap${o.textarea ? ' ta' : ''}">${input}${mic}</div></label>`;
 }
 
 // Dialog. Gibt null (abgebrochen) oder die Formularwerte plus __action zurück.
@@ -62,9 +119,18 @@ function modal({ title, body = '', ok = 'Speichern', actions = [] }) {
     document.body.appendChild(ov);
     const form = ov.querySelector('form');
     const close = (val) => {
+      if (activeRec) activeRec.rec.stop();
       ov.remove();
       resolve(val);
     };
+    bindMics(ov);
+    form.addEventListener('change', (e) => {
+      if (e.target.type === 'file') {
+        const out = form.querySelector('.fname');
+        const names = [...form.querySelectorAll('input[type=file]')].map((i) => (i.files[0] ? i.files[0].name : '')).filter(Boolean);
+        if (out) out.textContent = names.join(', ');
+      }
+    });
     const collect = (action) => {
       const out = { __action: action };
       new FormData(form).forEach((v, k) => (out[k] = v));
@@ -92,11 +158,12 @@ function modal({ title, body = '', ok = 'Speichern', actions = [] }) {
   });
 }
 
-function pickPhoto() {
+function pickPhoto(mode) {
   return new Promise((resolve) => {
     const i = document.createElement('input');
     i.type = 'file';
     i.accept = 'image/*';
+    if (mode === 'camera') i.setAttribute('capture', 'environment');
     i.style.display = 'none';
     document.body.appendChild(i);
     i.addEventListener('change', () => {
@@ -216,8 +283,8 @@ function viewLogin() {
       ${DEMO ? `<div class="banner demohint">Testmodus ohne Datenbank.<br>Prüfer: Code <strong>${esc(DEMO.code)}</strong>, Name frei.<br>Admin: <strong>${esc(DEMO.admin.email)}</strong> und Passwort <strong>${esc(DEMO.admin.password)}</strong>.</div>` : ''}
       <div class="seg"><button type="button" id="t-member" class="on">Prüfer</button><button type="button" id="t-admin">Admin</button></div>
       <form id="f-member" class="card pad">
-        ${field('Einheitscode', 'code', { required: true, autocomplete: 'off', placeholder: 'Code von deinem Admin' })}
-        ${field('Dein Name', 'name', { required: true, value: lastName, autocomplete: 'name' })}
+        ${field('Einheitscode', 'code', { required: true, autocomplete: 'off', nomic: true, placeholder: 'Code von deinem Admin' })}
+        ${field('Dein Name', 'name', { required: true, value: lastName, autocomplete: 'name', nomic: true })}
         <button class="btn primary block" type="submit">Anmelden</button>
       </form>
       <form id="f-admin" class="card pad" hidden>
@@ -423,7 +490,8 @@ async function viewVehicle(id) {
         <div class="muted">Bearbeiten: Tippe auf das Foto, um ein Fach zu markieren. Tippe auf eine Nummer, um es zu ändern.</div>
         <div class="stack wrap">
           <button class="btn" id="e-vehicle">Fahrzeugdaten</button>
-          <button class="btn" id="e-photo">${v.photo_path ? 'Foto ersetzen' : 'Foto aufnehmen'}</button>
+          <button class="btn" id="e-photo-cam">${v.photo_path ? 'Neues Foto (Kamera)' : 'Foto aufnehmen'}</button>
+          <button class="btn" id="e-photo-file">Foto aus Dateien</button>
           <button class="btn" id="e-area">+ Fach ohne Markierung</button>
           <button class="btn danger" id="e-del">Fahrzeug löschen</button>
         </div></div>`
@@ -572,8 +640,8 @@ async function viewVehicle(id) {
         route();
       });
 
-      on('e-photo', async () => {
-        const f = await pickPhoto();
+      const setVehiclePhoto = async (mode) => {
+        const f = await pickPhoto(mode);
         if (!f) return;
         busy(true);
         try {
@@ -587,7 +655,9 @@ async function viewVehicle(id) {
           busy(false);
         }
         route();
-      });
+      };
+      on('e-photo-cam', () => setVehiclePhoto('camera'));
+      on('e-photo-file', () => setVehiclePhoto('file'));
 
       on('e-area', async () => {
         const r = await modal({ title: 'Neues Fach', body: field('Name', 'name', { required: true }) });
@@ -739,7 +809,8 @@ async function viewArea(vid, aid) {
         <div class="muted">Bearbeiten: Tippe auf das Foto, um einen Gegenstand zu markieren. Den Namen kannst du über das Mikrofon der Tastatur diktieren.</div>
         <div class="stack wrap">
           <button class="btn" id="a-rename">Fach umbenennen</button>
-          <button class="btn" id="a-photo">${area.photo_path ? 'Foto ersetzen' : 'Foto aufnehmen'}</button>
+          <button class="btn" id="a-photo-cam">${area.photo_path ? 'Neues Foto (Kamera)' : 'Foto aufnehmen'}</button>
+          <button class="btn" id="a-photo-file">Foto aus Dateien</button>
           <button class="btn" id="a-item">+ Gegenstand ohne Markierung</button>
           <button class="btn danger" id="a-del">Fach löschen</button>
         </div></div>`
@@ -895,8 +966,8 @@ async function viewArea(vid, aid) {
         }
         route();
       });
-      on('a-photo', async () => {
-        const f = await pickPhoto();
+      const setAreaPhoto = async (mode) => {
+        const f = await pickPhoto(mode);
         if (!f) return;
         busy(true);
         try {
@@ -910,7 +981,9 @@ async function viewArea(vid, aid) {
           busy(false);
         }
         route();
-      });
+      };
+      on('a-photo-cam', () => setAreaPhoto('camera'));
+      on('a-photo-file', () => setAreaPhoto('file'));
       on('a-del', async () => {
         if (!confirm(`Fach "${area.name}" mit allen Gegenständen löschen?`)) return;
         busy(true);
@@ -972,15 +1045,16 @@ async function viewArea(vid, aid) {
           const cur = d.results[iid] || {};
           const r = await modal({
             title: 'Notiz und Foto',
-            body: field('Notiz (diktieren geht über die Tastatur)', 'note', { textarea: true, value: cur.note || '' }) + field('Foto', 'photo', { file: true }),
+            body: field('Notiz (diktieren geht über die Tastatur)', 'note', { textarea: true, value: cur.note || '' }) + photoField(),
           });
           if (!r) return;
           busy(true);
           try {
             cur.note = (r.note || '').trim() || null;
-            if (r.photo && r.photo.size) {
+            const pf = [r.photocam, r.photo].find((f) => f && f.size);
+            if (pf) {
               const old = cur.photo_path;
-              cur.photo_path = await uploadFile(r.photo, `checks/${S.uid}`);
+              cur.photo_path = await uploadFile(pf, `checks/${S.uid}`);
               if (old) await api.removePhoto(old);
             }
             d.results[iid] = cur;
@@ -1102,7 +1176,7 @@ async function viewSettings() {
           ? `<form id="f-set" class="card pad">
           <h3>Einheit</h3>
           ${field('Name der Einheit', 'org', { value: st.org_name })}
-          ${field('Einheitscode für Prüfer (mind. 6 Zeichen)', 'code', { value: st.team_code, required: true })}
+          ${field('Einheitscode für Prüfer (mind. 6 Zeichen)', 'code', { value: st.team_code, required: true, nomic: true })}
           <button class="btn primary block" type="submit">Speichern</button>
         </form>
         <div class="card pad">
@@ -1187,6 +1261,7 @@ export async function route() {
     else view = await viewHome();
     if (my !== routing) return;
     app.innerHTML = shell(view.html, view.active);
+    bindMics(app);
     view.bind();
     window.scrollTo(0, 0);
   } catch (e) {

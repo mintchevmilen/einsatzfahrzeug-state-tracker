@@ -49,7 +49,7 @@ try:
     expect(page.locator('h2')).to_have_text('MTW 1'); ok('vehicle created and opened', True)
     ok('edit mode on after create', page.locator('#edit-toggle').is_checked())
 
-    with page.expect_file_chooser() as fc: page.click('#e-photo')
+    with page.expect_file_chooser() as fc: page.click('#e-photo-cam')
     fc.value.set_files(PHOTO)
     expect(page.locator('#pinbox img')).to_be_visible(); ok('vehicle photo shown', True)
 
@@ -65,7 +65,7 @@ try:
 
     page.locator('.pin').first.click(); page.click('.modal [data-action=open]')
     expect(page.locator('h2')).to_have_text('Heck links'); ok('area opened', True)
-    with page.expect_file_chooser() as fc: page.click('#a-photo')
+    with page.expect_file_chooser() as fc: page.click('#a-photo-file')
     fc.value.set_files(PHOTO); expect(page.locator('#pinbox img')).to_be_visible(); ok('area photo shown', True)
     box = page.locator('#pinimg').bounding_box()
     page.mouse.click(box['x'] + box['width'] * 0.7, box['y'] + box['height'] * 0.3)
@@ -95,7 +95,9 @@ try:
     ok('pin colored', 'missing' in page.locator('.pin').nth(1).get_attribute('class'))
     page.locator('.item').nth(1).locator('[data-more]').click()
     page.fill('.modal [name=note]', 'Fach leer, Warndreieck fehlt')
-    page.set_input_files('.modal [name=photo]', PHOTO); page.click('.modal button[type=submit]')
+    ok('camera input has capture', page.locator('.modal input[name=photocam]').get_attribute('capture') == 'environment')
+    ok('file input has no capture', page.locator('.modal input[name=photo]').get_attribute('capture') is None)
+    page.set_input_files('.modal [name=photocam]', PHOTO); page.click('.modal button[type=submit]')
     expect(page.locator('.item').nth(1).locator('.rnote')).to_contain_text('(Foto)'); ok('note and photo saved in draft', True)
     page.screenshot(path=os.path.join(HERE, f'shot_{DEVICE}_check.png'))
     page.reload(); expect(page.locator('.stbtns').first).to_be_visible(); ok('draft survives reload', True)

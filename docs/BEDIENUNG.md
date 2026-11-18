@@ -42,3 +42,10 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Mehrere Checklisten pro Fahrzeug (zum Beispiel monatlich und jährlich).
 - Offline Warteschlange für fertige Checks.
 - Export als PDF oder Excel.
+
+## Fotos und Diktat (neu)
+
+- Bei jedem Foto gibt es zwei Wege: "Kamera" öffnet direkt die Handykamera. "Aus Dateien" öffnet die Galerie oder den Dateiauswahl Dialog.
+- An Textfeldern gibt es einen runden Mikrofon Knopf. Antippen, sprechen, nochmal tippen zum Stoppen. Der Text wird hinten angehängt.
+- Auf Android mit Chrome klappt das in der Regel gut. Auf dem iPhone ist die Browser Spracherkennung eingeschränkt. Dort fehlt der Knopf oder meldet einen Fehler. Dann das Mikrofon der iPhone Tastatur nutzen. Das geht in jedem Feld.
+- Code und Namensfelder haben bewusst keinen Mikrofon Knopf.
