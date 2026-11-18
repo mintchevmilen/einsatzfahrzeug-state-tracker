@@ -154,6 +154,28 @@ try:
     html = page.evaluate('window.__printhtml') or ''; ok('Fach QR mit Link zum Fach', '<svg' in html and 'QR Code' in html)
     before = page.evaluate('window.__printed'); page.click('#a-sheet'); page.wait_for_function(f'window.__printed > {before}')
     html = page.evaluate('window.__printhtml') or ''; ok('Fachblatt mit Beladung', 'Fachblatt' in html and 'Beladung' in html and '<tr>' in html)
+    # Kilometer und Tankstand
+    page.goto(BASE + f'?demo#/v/{vid}'); expect(page.locator('#u-in')).to_be_visible()
+    page.click('#u-in'); page.fill('.modal [name=km]', '1000'); page.select_option('.modal [name=fuel]', '3/4'); page.click('.modal button[type=submit]')
+    expect(page.locator('#u-out')).to_be_visible(); ok('Box zeigt Km und Tank', 'Km 1000' in page.locator('.usebox').inner_text() and '3/4' in page.locator('.usebox').inner_text())
+    page.click('#u-out'); page.fill('.modal [name=km]', '900'); page.locator('.modal button', has_text='Nur zurückgeben').click()
+    expect(page.locator('.toast.bad').last).to_contain_text('kleiner als beim Start'); ok('kleinerer Km Stand abgelehnt', page.locator('#u-out').count() == 1)
+    page.click('#u-out'); page.fill('.modal [name=km]', '1042'); page.select_option('.modal [name=fuel]', '1/2'); page.locator('.modal button', has_text='Nur zurückgeben').click()
+    expect(page.locator('#u-in')).to_be_visible()
+    page.goto(BASE + '?demo#/usage'); expect(page.locator('main')).to_contain_text('Km 1000 bis 1042 (42 km)'); ok('Protokoll mit gefahrenen Km und Tank', 'Tank 3/4 bis 1/2' in page.locator('main').inner_text())
+    with page.expect_download() as d4: page.click('#u-xlsx')
+    path4 = os.path.join(tempfile.mkdtemp(), 'k.xlsx'); d4.value.save_as(path4)
+    ws = openpyxl.load_workbook(path4)['Nutzung']; hdr = [c.value for c in ws[1]]
+    ok('Excel Spalte Gefahrene km', 'Gefahren km' in hdr and any(r[hdr.index('Gefahren km')].value == 42 for r in ws.iter_rows(min_row=2)), hdr)
+    # Wochenansicht
+    page.click('[data-tab=cal]'); page.click('[data-mode=week]')
+    expect(page.locator('h3.today')).to_have_count(1); ok('Woche zeigt sieben Tage', page.locator('main h3').count() == 7)
+    ok('heute markiert', '(heute)' in page.locator('h3.today').inner_text())
+    page.click('[data-wk="1"]'); ok('nächste Woche ohne heute', page.locator('h3.today').count() == 0)
+    page.click('[data-wk="0"]'); expect(page.locator('h3.today')).to_have_count(1)
+    # Mitgliederliste
+    page.goto(BASE + '?demo#/settings'); expect(page.locator('main')).to_contain_text('Mitglieder (')
+    ok('Mitgliederliste mit Aktivität', 'zuletzt aktiv' in page.locator('main').inner_text() or 'noch nichts eingetragen' in page.locator('main').inner_text())
     ok('keine Seitenfehler', len(errors) == 0, errors)
 finally:
     srv.terminate()

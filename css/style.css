@@ -191,3 +191,4 @@ input[type=checkbox] { width: auto; }
 .brow.isnew { box-shadow: 0 0 0 2px #e6a100; }
 .modal.scan video { width: 100%; max-height: 50vh; background: #000; border-radius: 8px; }
 header.top .who { display: flex; align-items: center; gap: 8px; }
+h3.today { color: var(--brand); }

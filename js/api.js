@@ -346,7 +346,7 @@ export const listUsages = (limit = 200, vehicleId = null) =>
 export const openUsages = () =>
   cached('usages:open', async () => ok(await sb.from('usages').select('*').is('ended_at', null)));
 export const checkIn = async (row) => ok(await sb.from('usages').insert(row).select().single());
-export const checkOut = async (id, by) => ok(await sb.from('usages').update({ ended_at: new Date().toISOString(), ended_by: by }).eq('id', id));
+export const checkOut = async (id, by, extra = {}) => ok(await sb.from('usages').update({ ended_at: new Date().toISOString(), ended_by: by, ...extra }).eq('id', id));
 export const listBookings = (sinceIso) =>
   cached('bookings:' + sinceIso.slice(0, 10), async () =>
     ok(await sb.from('bookings').select('*, vehicles(name)').gte('ends_at', sinceIso).order('starts_at')));

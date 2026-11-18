@@ -95,3 +95,9 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Im Fach (als Admin, Bearbeiten aus) gibt es "QR Code drucken" und "Fachblatt (PDF)" mit Foto und Beladung.
 - Der Tab "Nutzung" zeigt eine Zahl: beim Admin die offenen Buchungsanfragen, beim Mitglied neue Antworten (bestätigt oder abgelehnt). Die Zahl verschwindet, sobald man den Kalender angesehen hat.
 - Hinweis: Meldet sich ein Mitglied ab und wieder neu an, bekommt es technisch ein neues Konto. Die Antworten findet es über seinen Namen. Stornieren kann es nur Buchungen aus seinem aktuellen Konto.
+
+## Barcode, Kilometer, Tankstand, Wochenansicht, Mitglieder (neu)
+- Barcode je Gegenstand: Im Bearbeiten Modus beim Gegenstand das Feld "Barcode" ausfüllen oder mit "Barcode scannen" von der Kamera lesen. Im Check gibt es im Fach den Knopf "Barcode scannen". Jeder Scan hakt den passenden Gegenstand als vorhanden ab, auch wenn er in einem anderen Fach liegt. Gelesen werden QR, Code 128, Code 39, EAN, UPC, ITF und Data Matrix.
+- Kilometer und Tankstand: Beim Nutzen und Zurückgeben optional eintragen. Der letzte Kilometerstand wird vorgeschlagen. Ein Endstand unter dem Startstand wird abgelehnt. Im Protokoll und im Excel stehen gefahrene Kilometer und Tank.
+- Kalender: Umschalten zwischen Liste und Woche. In der Woche stehen sieben Tage mit den Buchungen, "Vorige", "Diese Woche" und "Nächste".
+- Einstellungen, Mitglieder: Name, Beitritt, letzte Aktivität und Zahl der Checks und Nutzungen. "Entfernen" löscht den Eintrag. Wer den Teamcode kennt, kann wieder beitreten. Für einen dauerhaften Ausschluss den Teamcode ändern.

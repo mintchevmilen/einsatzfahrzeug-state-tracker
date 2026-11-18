@@ -355,6 +355,20 @@ async function trySync(rerender = true) {
 }
 window.addEventListener('online', () => trySync(true));
 document.addEventListener('click', (e) => {
+  const sf = e.target.closest && e.target.closest('[data-scanfill]');
+  if (sf) {
+    const input = sf.closest('form').querySelector('[name=barcode]');
+    openScanner({
+      title: 'Barcode scannen',
+      hint: 'Halte die Kamera auf den Strichcode oder QR Code des Gegenstands.',
+      mode: 'code',
+      onText: (t) => {
+        input.value = t;
+        return true;
+      },
+    });
+    return;
+  }
   if (e.target.closest && e.target.closest('#scan-btn')) {
     scanQr();
     return;
@@ -684,7 +698,7 @@ async function viewVehicle(id) {
     ? ''
     : `<div class="card pad usebox ${curUse ? 'busy' : ''}"><h3>Nutzung</h3>${
         curUse
-          ? `<div><strong>Im Gebrauch</strong>: ${esc(curUse.member_name)}, ${esc(api.purposeLabel(curUse.purpose))}, seit ${fmtDateTime(curUse.started_at)}</div>
+          ? `<div><strong>Im Gebrauch</strong>: ${esc(curUse.member_name)}, ${esc(api.purposeLabel(curUse.purpose))}, seit ${fmtDateTime(curUse.started_at)}${curUse.km_start !== null && curUse.km_start !== undefined ? ', Km ' + curUse.km_start : ''}${curUse.fuel_start ? ', Tank ' + esc(curUse.fuel_start) : ''}</div>
              ${mine ? '<div class="stack"><button class="btn primary" id="u-out">Zurückgeben</button></div>' : '<div class="muted">Nur die Person selbst oder der Admin kann zurückgeben.</div>'}`
           : '<div class="muted">Frei. Wer das Fahrzeug nimmt, trägt sich hier ein.</div><div class="stack"><button class="btn primary" id="u-in">Fahrzeug nutzen</button></div>'
       }
@@ -925,15 +939,26 @@ async function viewVehicle(id) {
       });
 
       on('u-in', async () => {
+        let lastKm = '';
+        try {
+          const prev = (await api.listUsages(10, id)).find((u) => u.km_end !== null && u.km_end !== undefined);
+          if (prev) lastKm = prev.km_end;
+        } catch (e) {
+          /* ohne Vorschlag */
+        }
         const r = await modal({
           title: 'Fahrzeug nutzen',
-          body: field('Wofür?', 'purpose', { options: api.PURPOSES, value: 'einsatz' }) + field('Hinweis (optional)', 'note', { placeholder: 'z. B. Ziel oder Grund' }),
+          body:
+            field('Wofür?', 'purpose', { options: api.PURPOSES, value: 'einsatz' }) +
+            field('Kilometerstand (optional)', 'km', { type: 'number', value: lastKm, nomic: true, attrs: 'min="0" inputmode="numeric"' }) +
+            field('Tankstand (optional)', 'fuel', { options: FUEL, value: '' }) +
+            field('Hinweis (optional)', 'note', { placeholder: 'z. B. Ziel oder Grund' }),
           ok: 'Eintragen',
         });
         if (!r) return;
         busy(true);
         try {
-          await api.checkIn({ vehicle_id: id, member_name: S.name || 'Admin', purpose: r.purpose, note: r.note.trim() || null });
+          await api.checkIn({ vehicle_id: id, member_name: S.name || 'Admin', purpose: r.purpose, note: r.note.trim() || null, km_start: kmNum(r.km), fuel_start: r.fuel || null });
           toast('Eingetragen. Gute Fahrt.');
         } catch (e) {
           if (e && /usages_one_open|duplicate/.test(e.message || '')) toast('Das Fahrzeug ist gerade schon in Benutzung.', true);
@@ -946,7 +971,10 @@ async function viewVehicle(id) {
       on('u-out', async () => {
         const r = await modal({
           title: 'Fahrzeug zurückgeben',
-          body: '<p class="muted">Danach kannst du direkt einen Check machen.</p>',
+          body:
+            field('Kilometerstand jetzt (optional)', 'km', { type: 'number', value: '', nomic: true, attrs: 'min="0" inputmode="numeric"', placeholder: curUse.km_start !== null && curUse.km_start !== undefined ? 'Start war ' + curUse.km_start : '' }) +
+            field('Tankstand jetzt (optional)', 'fuel', { options: FUEL, value: '' }) +
+            '<p class="muted">Danach kannst du direkt einen Check machen.</p>',
           ok: '',
           actions: [
             { key: 'only', label: 'Nur zurückgeben' },
@@ -955,9 +983,14 @@ async function viewVehicle(id) {
           ],
         });
         if (!r) return;
+        const kmEnd = kmNum(r.km);
+        if (kmEnd !== null && curUse.km_start !== null && curUse.km_start !== undefined && kmEnd < curUse.km_start) {
+          toast(`Der Kilometerstand ist kleiner als beim Start (${curUse.km_start}). Bitte nochmal.`, true);
+          return;
+        }
         busy(true);
         try {
-          await api.checkOut(curUse.id, S.name || 'Admin');
+          await api.checkOut(curUse.id, S.name || 'Admin', { km_end: kmEnd, fuel_end: r.fuel || null });
         } catch (e) {
           fail(e);
           busy(false);
@@ -1147,6 +1180,7 @@ async function viewArea(vid, aid) {
       <h2>${esc(area.name)}</h2>
       ${checking ? `<div class="progress"><div style="width:${items.length ? (doneCount / items.length) * 100 : 0}%"></div><span id="pcount">${doneCount} von ${items.length} geprüft</span></div>` : ''}
       ${admin ? `<label class="switch"><input type="checkbox" id="edit-toggle" ${edit ? 'checked' : ''}><span>Bearbeiten</span></label>` : ''}
+      ${checking ? '<div class="stack"><button class="btn small" id="a-scan">Barcode scannen</button></div>' : ''}
       ${movingBar}
       ${pinBox(url, pins, admin ? 'Noch kein Foto. Nimm ein Foto vom Fach auf.' : 'Kein Foto vorhanden')}
       ${editPanel}
@@ -1185,6 +1219,8 @@ async function viewArea(vid, aid) {
                   value: it ? it.checklist_id || '' : '',
                 })
               : '') +
+            field('Barcode (optional)', 'barcode', { value: it ? it.barcode || '' : '', nomic: true, placeholder: 'Code vom Etikett oder Gegenstand' }) +
+            '<div class="stack"><button type="button" class="btn small" data-scanfill>Barcode scannen</button></div>' +
             field('Hinweis (optional)', 'note', { textarea: true, value: it ? it.note || '' : '' }),
           actions: it
             ? [
@@ -1204,6 +1240,7 @@ async function viewArea(vid, aid) {
             name: r.name.trim(),
             qty: Math.max(0, parseInt(r.qty, 10) || 1),
             checklist_id: r.checklist_id || null,
+            barcode: (r.barcode || '').trim() || null,
             note: (r.note || '').trim() || null,
             x: pos ? pos.x : null,
             y: pos ? pos.y : null,
@@ -1268,6 +1305,7 @@ async function viewArea(vid, aid) {
               name: r.name.trim(),
               qty: Math.max(0, parseInt(r.qty, 10) || 1),
               checklist_id: r.checklist_id === undefined ? it.checklist_id : r.checklist_id || null,
+              barcode: (r.barcode || '').trim() || null,
               note: (r.note || '').trim() || null,
             });
           }
@@ -1358,6 +1396,32 @@ async function viewArea(vid, aid) {
           pc.previousElementSibling.style.width = items.length ? (n / items.length) * 100 + '%' : '0%';
         }
       };
+
+      const scanBtn = document.getElementById('a-scan');
+      if (scanBtn)
+        scanBtn.onclick = async () => {
+          const all = await api.listItemsForAreas(areas.map((a) => a.id));
+          openScanner({
+            title: 'Gegenstand scannen',
+            hint: 'Halte die Kamera auf den Strichcode. Der Gegenstand wird als vorhanden abgehakt. Zum Beenden "Schließen".',
+            mode: 'code',
+            onText: (t) => {
+              const it = all.find((x) => x.barcode === t);
+              if (!it) return `Unbekannter Code: ${t}`;
+              const d = getDraft(vid);
+              if (!d) return true;
+              if (!scopeItems(all, d).some((x) => x.id === it.id)) return `${it.name} gehört nicht zu diesem Check.`;
+              const cur = d.results[it.id] || {};
+              cur.status = 'ok';
+              d.results[it.id] = cur;
+              setDraft(vid, d);
+              draft.results = d.results;
+              paint(it.id);
+              const a = areas.find((x) => x.id === it.area_id);
+              return `${it.name}: vorhanden${a && a.id !== aid ? ' (Fach ' + a.name + ')' : ''}`;
+            },
+          });
+        };
 
       document.querySelectorAll('.st').forEach((b) => {
         b.onclick = () => {
@@ -1610,12 +1674,14 @@ export function parseScan(text) {
 }
 window.__fz = { parseScan };
 
-async function scanQr() {
+// Allgemeiner Kamera Scanner. mode 'qr' liest nur QR (jsQR), mode 'code' liest QR und Strichcodes (zxing).
+// onText(text) gibt zurück: true = schließen, Text = Meldung zeigen und weiter scannen, sonst weiter scannen.
+async function openScanner({ title, hint, mode, onText }) {
   const ov = document.createElement('div');
   ov.className = 'overlay';
-  ov.innerHTML = `<div class="modal scan"><h3>QR Code scannen</h3>
+  ov.innerHTML = `<div class="modal scan"><h3>${esc(title)}</h3>
     <video id="scan-v" playsinline muted></video>
-    <p class="muted" id="scan-msg">Halte die Kamera auf den QR Code an einem Fahrzeug oder Fach.</p>
+    <p class="muted" id="scan-msg">${esc(hint)}</p>
     <div class="mbtns"><button type="button" class="btn ghost" id="scan-x">Schließen</button></div></div>`;
   document.body.appendChild(ov);
   const msg = (t) => {
@@ -1644,48 +1710,72 @@ async function scanQr() {
   } catch (e) {
     /* weiter */
   }
-  const det = null; // nur jsQR: auf allen Geräten gleich und getestet
-  const jsqr = (await import('../vendor/jsqr.mjs')).default;
   const cv = document.createElement('canvas');
   const cx = cv.getContext('2d', { willReadFrequently: true });
-  let lastBad = '';
+  let decode;
+  if (mode === 'code') {
+    const Z = (await import('../vendor/zxing.mjs')).default;
+    const hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.ITF, Z.BarcodeFormat.DATA_MATRIX]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    const reader = new Z.MultiFormatReader();
+    reader.setHints(hints);
+    decode = () => {
+      try {
+        return reader.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)))).getText();
+      } catch (e) {
+        return null;
+      }
+    };
+  } else {
+    const jsqr = (await import('../vendor/jsqr.mjs')).default;
+    decode = () => {
+      const img = cx.getImageData(0, 0, cv.width, cv.height);
+      const c = jsqr(img.data, cv.width, cv.height);
+      return c ? c.data : null;
+    };
+  }
+  let last = '';
+  let lastAt = 0;
   const tick = async () => {
     if (stopped) return;
     let text = null;
     try {
       if (video.videoWidth) {
-        if (det) {
-          const codes = await det.detect(video);
-          if (codes.length) text = codes[0].rawValue;
-        } else {
-          const w = Math.min(640, video.videoWidth);
-          cv.width = w;
-          cv.height = Math.round((video.videoHeight / video.videoWidth) * w);
-          cx.drawImage(video, 0, 0, cv.width, cv.height);
-          const img = cx.getImageData(0, 0, cv.width, cv.height);
-          const c = jsqr(img.data, cv.width, cv.height);
-          if (c) text = c.data;
-        }
+        const w = Math.min(640, video.videoWidth);
+        cv.width = w;
+        cv.height = Math.round((video.videoHeight / video.videoWidth) * w);
+        cx.drawImage(video, 0, 0, cv.width, cv.height);
+        text = decode();
       }
     } catch (e) {
       /* nächster Versuch */
     }
-    if (text) {
-      const h = parseScan(text);
-      if (h) {
-        close();
-        location.hash = h;
-        route();
-        return;
-      }
-      if (text !== lastBad) {
-        lastBad = text;
-        msg('Dieser Code gehört nicht zu dieser App.');
-      }
+    if (text && (text !== last || Date.now() - lastAt > 2500)) {
+      last = text;
+      lastAt = Date.now();
+      const r = await onText(text);
+      if (r === true) return close();
+      if (typeof r === 'string') msg(r);
     }
     setTimeout(tick, 250);
   };
   tick();
+}
+
+function scanQr() {
+  return openScanner({
+    title: 'QR Code scannen',
+    hint: 'Halte die Kamera auf den QR Code an einem Fahrzeug oder Fach.',
+    mode: 'qr',
+    onText: (text) => {
+      const h = parseScan(text);
+      if (!h) return 'Dieser Code gehört nicht zu dieser App.';
+      location.hash = h;
+      route();
+      return true;
+    },
+  });
 }
 
 async function areaQr(v, area) {
@@ -1885,6 +1975,15 @@ const fmtDur = (a, b) => {
   const min = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000));
   return min < 60 ? `${min} Min` : `${Math.floor(min / 60)} Std ${pad2(min % 60)} Min`;
 };
+const FUEL = [{ value: '', label: 'keine Angabe' }, { value: 'leer', label: 'leer' }, { value: '1/4', label: '1/4' }, { value: '1/2', label: '1/2' }, { value: '3/4', label: '3/4' }, { value: 'voll', label: 'voll' }];
+const kmNum = (v) => (String(v || '').trim() === '' ? null : Math.max(0, parseInt(v, 10)));
+const kmLine = (u) => {
+  const parts = [];
+  if (u.km_start !== null && u.km_start !== undefined) parts.push(`Km ${u.km_start}${u.km_end !== null && u.km_end !== undefined ? ' bis ' + u.km_end + ' (' + (u.km_end - u.km_start) + ' km)' : ''}`);
+  else if (u.km_end !== null && u.km_end !== undefined) parts.push(`Km Ende ${u.km_end}`);
+  if (u.fuel_start || u.fuel_end) parts.push(`Tank ${u.fuel_start || '?'}${u.fuel_end ? ' bis ' + u.fuel_end : ''}`);
+  return esc(parts.join(', '));
+};
 const BK_STATUS = { requested: 'Angefragt', confirmed: 'Bestätigt', rejected: 'Abgelehnt', cancelled: 'Storniert' };
 
 // Öffnet das Buchungsformular. Gibt true zurück, wenn gespeichert wurde.
@@ -1948,10 +2047,10 @@ async function usageExcel(usages, bookings) {
     const bytes = X.buildXlsx([
       {
         name: 'Nutzung',
-        widths: [24, 20, 14, 18, 18, 12, 30],
+        widths: [24, 20, 14, 18, 18, 12, 10, 10, 10, 10, 10, 30],
         rows: [
-          ['Fahrzeug', 'Person', 'Zweck', 'Von', 'Bis', 'Dauer', 'Hinweis'],
-          ...usages.map((u) => [u.vehicles ? u.vehicles.name : '', u.member_name, api.purposeLabel(u.purpose), fmtDateTime(u.started_at), u.ended_at ? fmtDateTime(u.ended_at) : 'läuft', u.ended_at ? fmtDur(u.started_at, u.ended_at) : '', u.note || '']),
+          ['Fahrzeug', 'Person', 'Zweck', 'Von', 'Bis', 'Dauer', 'Km Start', 'Km Ende', 'Gefahren km', 'Tank Start', 'Tank Ende', 'Hinweis'],
+          ...usages.map((u) => [u.vehicles ? u.vehicles.name : '', u.member_name, api.purposeLabel(u.purpose), fmtDateTime(u.started_at), u.ended_at ? fmtDateTime(u.ended_at) : 'läuft', u.ended_at ? fmtDur(u.started_at, u.ended_at) : '', u.km_start ?? '', u.km_end ?? '', u.km_start != null && u.km_end != null ? u.km_end - u.km_start : '', u.fuel_start || '', u.fuel_end || '', u.note || '']),
         ],
       },
       {
@@ -1977,7 +2076,12 @@ async function viewUsage() {
   const tab = S.useTab || 'log';
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
-  const [usages, bookings] = await Promise.all([api.listUsages(200), api.listBookings(startOfToday.toISOString())]);
+  const mode = S.calMode || 'list';
+  const wk = S.weekOff || 0;
+  const weekStart = new Date(startOfToday);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7) + wk * 7);
+  const since = mode === 'week' && weekStart < startOfToday ? weekStart : startOfToday;
+  const [usages, bookings] = await Promise.all([api.listUsages(200), api.listBookings(since.toISOString())]);
   const open = usages.filter((u) => !u.ended_at);
 
   const logRows = usages
@@ -1986,6 +2090,7 @@ async function viewUsage() {
         <div class="ctop"><strong>${esc(u.vehicles ? u.vehicles.name : '')}</strong><span class="badge ${u.ended_at ? '' : 'part'}">${u.ended_at ? esc(fmtDur(u.started_at, u.ended_at)) : 'läuft'}</span></div>
         <div>${esc(u.member_name)}, ${esc(api.purposeLabel(u.purpose))}</div>
         <div class="muted">${fmtDateTime(u.started_at)}${u.ended_at ? ' bis ' + fmtDateTime(u.ended_at) : ''}${u.note ? ' · ' + esc(u.note) : ''}</div>
+        ${kmLine(u) ? `<div class="muted">${kmLine(u)}</div>` : ''}
       </div>`
     )
     .join('');
@@ -2009,7 +2114,22 @@ async function viewUsage() {
       </div></div>`;
   };
   const pending = live.filter((b) => b.status === 'requested');
-  const calHtml = days
+  const weekDays = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+    const d0 = new Date(weekStart);
+    d0.setDate(d0.getDate() + i);
+    const d1 = new Date(d0);
+    d1.setDate(d1.getDate() + 1);
+    return { d0, list: live.filter((b) => new Date(b.starts_at) < d1 && new Date(b.ends_at) > d0).sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)) };
+  });
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  const today = localDate(new Date());
+  const weekHtml = `<div class="stack wrap"><button class="btn small" data-wk="-1">‹ Vorige</button><button class="btn small" data-wk="0">Diese Woche</button><button class="btn small" data-wk="1">Nächste ›</button></div>
+    <p class="muted">${weekStart.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} bis ${weekEnd.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</p>` +
+    weekDays
+      .map(({ d0, list }) => `<h3 class="${localDate(d0) === today ? 'today' : ''}">${d0.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' })}${localDate(d0) === today ? ' (heute)' : ''}</h3>${list.map(bkCard).join('') || '<p class="muted">Keine Buchung.</p>'}`)
+      .join('');
+  const calHtml = mode === 'week' ? weekHtml : days
     .map((d) => `<h3>${new Date(d + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' })}</h3>${byDay[d].sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)).map(bkCard).join('')}`)
     .join('');
 
@@ -2022,13 +2142,25 @@ async function viewUsage() {
           ? `${open.length ? `<p class="muted">${open.length} Fahrzeug${open.length === 1 ? '' : 'e'} im Gebrauch.</p>` : '<p class="muted">Gerade ist kein Fahrzeug im Gebrauch.</p>'}
              ${logRows || '<p class="muted">Noch keine Nutzung eingetragen. Eintragen geht im Fahrzeug unter "Nutzung".</p>'}
              ${admin ? '<button class="btn block" id="u-xlsx">Nutzung und Buchungen als Excel</button>' : ''}`
-          : `<div class="stack"><button class="btn primary" id="bk-add">${admin ? '+ Buchung' : '+ Buchung anfragen'}</button></div>
+          : `<div class="stack wrap"><button class="btn primary" id="bk-add">${admin ? '+ Buchung' : '+ Buchung anfragen'}</button><button class="btn small ${mode === 'list' ? 'primary' : ''}" data-mode="list">Liste</button><button class="btn small ${mode === 'week' ? 'primary' : ''}" data-mode="week">Woche</button></div>
              ${calHtml || '<p class="muted">Keine Buchungen in der Zukunft.</p>'}`
       }`,
     bind() {
       document.querySelectorAll('[data-tab]').forEach((b) => {
         b.onclick = () => {
           S.useTab = b.dataset.tab;
+          route();
+        };
+      });
+      document.querySelectorAll('[data-mode]').forEach((b) => {
+        b.onclick = () => {
+          S.calMode = b.dataset.mode;
+          route();
+        };
+      });
+      document.querySelectorAll('[data-wk]').forEach((b) => {
+        b.onclick = () => {
+          S.weekOff = b.dataset.wk === '0' ? 0 : (S.weekOff || 0) + Number(b.dataset.wk);
           route();
         };
       });
@@ -2293,7 +2425,22 @@ async function viewSettings() {
   const admin = S.role === 'admin';
   let st = null;
   let members = [];
-  if (admin) [st, members] = await Promise.all([api.getSettings(), api.listMembers()]);
+  let act = {};
+  if (admin) {
+    [st, members] = await Promise.all([api.getSettings(), api.listMembers()]);
+    try {
+      const [ch, us] = await Promise.all([api.listChecks(200), api.listUsages(200)]);
+      const bump = (uid, at, kind) => {
+        const a = (act[uid] ||= { last: null, checks: 0, usages: 0 });
+        if (!a.last || at > a.last) a.last = at;
+        a[kind]++;
+      };
+      for (const c of ch) if (c.user_id) bump(c.user_id, c.created_at, 'checks');
+      for (const u of us) if (u.user_id) bump(u.user_id, u.started_at, 'usages');
+    } catch (e) {
+      act = {};
+    }
+  }
   const link = location.origin + location.pathname;
 
   return {
@@ -2323,8 +2470,9 @@ async function viewSettings() {
           <button class="btn block" id="export">Daten herunterladen (JSON)</button>
         </div>
         <div class="card pad">
-          <h3>Prüfer (${members.length})</h3>
-          ${members.map((m) => `<div class="row"><span class="grow">${esc(m.name)}<div class="muted">seit ${fmtDate(m.created_at)}</div></span><button class="btn small danger" data-rm="${m.user_id}">Entfernen</button></div>`).join('') || '<div class="muted">Noch niemand angemeldet.</div>'}
+          <h3>Mitglieder (${members.length})</h3>
+          <div class="muted">Mitglieder treten mit dem Teamcode bei. "Entfernen" löscht den Eintrag, mit dem Teamcode kann man wieder beitreten. Um jemanden dauerhaft auszusperren, ändere den Teamcode.</div>
+          ${members.map((m) => { const a = act[m.user_id]; return `<div class="row"><span class="grow">${esc(m.name)}<div class="muted">seit ${fmtDate(m.created_at)}${a ? ` · zuletzt aktiv ${fmtDate(a.last)} · ${a.checks} Checks, ${a.usages} Nutzungen` : ' · noch nichts eingetragen'}</div></span><button class="btn small danger" data-rm="${m.user_id}">Entfernen</button></div>`; }).join('') || '<div class="muted">Noch keine Mitglieder.</div>'}
         </div>`
           : ''
       }`,

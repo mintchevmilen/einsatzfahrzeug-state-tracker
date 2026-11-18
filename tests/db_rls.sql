@@ -166,6 +166,28 @@ select t.run('admin ends usage', 'aaaaaaaa-0000-0000-0000-000000000001','authent
 select t.run('member cannot delete usage', 'dddddddd-0000-0000-0000-000000000004','authenticated',
  $$ with x as (delete from public.usages returning 1) select count(*)::text from x $$, '0');
 
+-- Kilometer, Tankstand, Barcode
+select t.run('member checks in with km and fuel', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (insert into public.usages(vehicle_id,member_name,purpose,km_start,fuel_start) values ('11111111-1111-1111-1111-111111111111','Anna','fahrt',1000,'3/4') returning 1) select count(*)::text from x $$, '1');
+select t.run('km end below km start rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ update public.usages set ended_at=now(), km_end=900 where ended_at is null returning 1 $$, 'fail');
+select t.run('bad fuel value rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ update public.usages set fuel_end='halb' where ended_at is null returning 1 $$, 'fail');
+select t.run('negative km rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ update public.usages set km_end=-5 where ended_at is null returning 1 $$, 'fail');
+select t.run('member ends with km and fuel', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.usages set ended_at=now(), km_end=1042, fuel_end='1/2' where ended_at is null returning 1) select count(*)::text from x $$, '1');
+select t.run('km saved', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ select km_start::text||'-'||km_end::text||' '||fuel_start||' '||fuel_end from public.usages where km_end is not null $$, '1000-1042 3/4 1/2');
+select t.run('admin sets item barcode', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.items set barcode='4006381333931' returning 1) select count(*)::text from x $$, '1');
+select t.run('empty barcode rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.items set barcode='' returning 1 $$, 'fail');
+select t.run('member reads barcode', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ select barcode from public.items limit 1 $$, '4006381333931');
+select t.run('member cannot set barcode', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.items set barcode='x' returning 1) select count(*)::text from x $$, '0');
+
 -- Buchungen
 select t.run('member requests booking', 'dddddddd-0000-0000-0000-000000000004','authenticated',
  $$ with x as (insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at) values ('11111111-1111-1111-1111-111111111111','Anna','uebung','2030-01-10 10:00+00','2030-01-10 12:00+00') returning 1) select count(*)::text from x $$, '1');

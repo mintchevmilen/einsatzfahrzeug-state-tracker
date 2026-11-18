@@ -45,6 +45,32 @@ try:
         ok('keine Seitenfehler', not errs, errs)
         b.close()
     run(good, True); run(bad, False); run(good, True, nodet=True); run(bad, False, nodet=True)  # zweiter Durchlauf ohne BarcodeDetector (wie iPhone Safari), nur mit jsQR
+    # Strichcode am Gegenstand: Code 128 als Kamerabild, im Check scannen und abhaken
+    import barcode
+    from barcode.writer import ImageWriter
+    CODE = 'FZ-12345'
+    bpng = barcode.get('code128', CODE, writer=ImageWriter()).save(os.path.join(tmp, 'bar'), options={'write_text': False, 'quiet_zone': 10, 'module_height': 30})
+    bar_y4m = os.path.join(tmp, 'bar.y4m')
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', bpng, '-t', '3', '-vf', 'scale=640:-2,pad=640:480:0:(oh-ih)/2:white,format=yuv420p', '-r', '10', bar_y4m], check=True)
+    b = p.chromium.launch(executable_path=CHROME, args=['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', f'--use-file-for-fake-video-capture={bar_y4m}'])
+    ctx = b.new_context(viewport={'width': 390, 'height': 844}, permissions=['camera'], service_workers='block')
+    pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    pg.goto(BASE + '?demo'); pg.click('#t-admin'); pg.fill('#f-admin [name=email]', 'admin@demo.de'); pg.fill('#f-admin [name=password]', 'demo1234'); pg.click('#f-admin button[type=submit]')
+    pg.locator('.vcard').first.click(); pg.locator('.rows .row').first.click()
+    pg.check('#edit-toggle'); pg.locator('[data-edit]').first.click()
+    pg.fill('.modal [name=barcode]', CODE); pg.click('.modal button[type=submit]')
+    pg.locator('[data-edit]').first.click(); ok('Barcode am Gegenstand gespeichert', pg.input_value('.modal [name=barcode]') == CODE)
+    pg.fill('.modal [name=barcode]', ''); pg.click('[data-scanfill]'); expect(pg.locator('#scan-v')).to_be_visible()
+    pg.wait_for_function("document.querySelector('.modal [name=barcode]').value === 'FZ-12345'", timeout=15000)
+    ok('Scannen füllt das Barcode Feld', pg.input_value('.modal [name=barcode]') == CODE); pg.click('.modal button[type=submit]')
+    pg.uncheck('#edit-toggle'); pg.click('.back'); pg.click('#start')
+    pg.locator('.rows .row').first.click(); first = pg.locator('.item').first
+    ok('Gegenstand noch nicht geprüft', 'on' not in (first.locator('[data-st=ok]').get_attribute('class') or ''))
+    pg.click('#a-scan'); expect(pg.locator('#scan-v')).to_be_visible()
+    expect(first.locator('[data-st=ok]')).to_have_class(__import__('re').compile('on'), timeout=15000)
+    ok('Scan im Check hakt Gegenstand ab', True)
+    pg.click('#scan-x'); ok('keine Seitenfehler (Strichcode)', not errs, errs)
+    b.close()
     b = p.chromium.launch(executable_path=CHROME, args=['--no-sandbox']); pg = b.new_page(); pg.goto(BASE + '?demo')
     ok('parseScan Regeln', pg.evaluate("(b) => [window.__fz.parseScan(b + '#/v/' + 'abcdef12-0000-0000-0000-000000000001'), window.__fz.parseScan(b + '#/settings'), window.__fz.parseScan('quatsch')]", BASE) == ['#/v/abcdef12-0000-0000-0000-000000000001', None, None])
     b.close()

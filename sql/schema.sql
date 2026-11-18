@@ -432,3 +432,16 @@ create policy bookings_update on public.bookings for update
   with check (public.is_admin() or (public.can_read() and user_id = auth.uid() and status = 'cancelled'));
 drop policy if exists bookings_delete on public.bookings;
 create policy bookings_delete on public.bookings for delete using (public.is_admin());
+
+-- ======================================================================
+-- Barcode je Gegenstand, Kilometer und Tankstand bei der Nutzung
+-- ======================================================================
+alter table public.items add column if not exists barcode text check (barcode is null or char_length(barcode) between 1 and 64);
+create index if not exists items_barcode_idx on public.items(barcode) where barcode is not null;
+alter table public.usages add column if not exists km_start int check (km_start is null or km_start >= 0);
+alter table public.usages add column if not exists km_end int check (km_end is null or km_end >= 0);
+alter table public.usages add column if not exists fuel_start text check (fuel_start is null or fuel_start in ('leer','1/4','1/2','3/4','voll'));
+alter table public.usages add column if not exists fuel_end text check (fuel_end is null or fuel_end in ('leer','1/4','1/2','3/4','voll'));
+do $$ begin
+  alter table public.usages add constraint usages_km_order check (km_end is null or km_start is null or km_end >= km_start);
+exception when duplicate_object then null; end $$;
