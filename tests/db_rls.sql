@@ -91,6 +91,20 @@ select t.run('storage member can read', 'dddddddd-0000-0000-0000-000000000004','
 select t.run('storage stranger cannot read', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated', $$ select count(*)::text from storage.objects $$, '0');
 select t.run('storage anon cannot read', null,'anon', $$ select count(*)::text from storage.objects $$, '0');
 
+-- Mängelverfolgung
+select t.run('new results default to open', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ select string_agg(distinct resolved_status, ',') from public.check_results $$, 'open');
+select t.run('member cannot update defect state', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.check_results set resolved_status='fixed' where status<>'ok' returning 1) select count(*)::text from x $$, '0');
+select t.run('state still open after member attempt', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ select count(*)::text from public.check_results where status<>'ok' and resolved_status='open' and status<>'ok' $$, (select count(*)::text from public.check_results where status<>'ok'));
+select t.run('admin can set progress', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.check_results set resolved_status='progress', resolved_by='Admin', resolved_at=now() where status<>'ok' returning 1) select (count(*)>0)::text from x $$, 'true');
+select t.run('admin invalid state rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.check_results set resolved_status='bogus' where status<>'ok' returning 1 $$, 'fail');
+select t.run('stranger cannot update defect state', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
+ $$ with x as (update public.check_results set resolved_status='fixed' returning 1) select count(*)::text from x $$, '0');
+
 -- Admin Verwaltung
 select t.run('admin sees members', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select count(*)::text from public.members $$, '2');
 select t.run('admin remove member', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select public.remove_member('dddddddd-0000-0000-0000-000000000004')::text $$, '');

@@ -49,3 +49,10 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - An Textfeldern gibt es einen runden Mikrofon Knopf. Antippen, sprechen, nochmal tippen zum Stoppen. Der Text wird hinten angehängt.
 - Auf Android mit Chrome klappt das in der Regel gut. Auf dem iPhone ist die Browser Spracherkennung eingeschränkt. Dort fehlt der Knopf oder meldet einen Fehler. Dann das Mikrofon der iPhone Tastatur nutzen. Das geht in jedem Feld.
 - Code und Namensfelder haben bewusst keinen Mikrofon Knopf.
+
+## Übersicht und Mängel (neu)
+
+- Startseite: drei Kacheln (offene Mängel, Prüfung fällig, nie geprüft) und eine Ampel an jedem Fahrzeug. Rot: offener Mangel oder Prüfung überfällig. Gelb: Mangel in Arbeit, Prüfung in 30 Tagen fällig oder noch nie geprüft. Grün: in Ordnung.
+- Reiter "Mängel": alle offenen Mängel nach Fahrzeug, mit Foto, Notiz und Finder. Der Admin setzt "In Arbeit" oder "Behoben" (mit Kommentar) und kann wieder öffnen. Prüfer sehen die Liste nur.
+- Ein Mangel gilt auch als erledigt, wenn der Gegenstand bei einem späteren Check wieder mit OK abgehakt wird. Gezeigt wird immer das neueste Ergebnis je Gegenstand.
+- Für bestehende Datenbanken: `sql/schema.sql` nochmal ausführen (mehrfach möglich) oder nur den Block "Mängelverfolgung".

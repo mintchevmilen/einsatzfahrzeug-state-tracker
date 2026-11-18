@@ -2,7 +2,7 @@ import * as api from './api.js';
 import { esc, fmtDate, fmtDateTime, daysUntil, relPos, configured } from './api.js';
 
 const app = document.getElementById('app');
-const S = { role: null, name: null, org: '', uid: null, edit: false, moving: null };
+const S = { role: null, name: null, org: '', uid: null, edit: false, moving: null, openCount: 0 };
 
 // ======================================================================
 // Kleine UI Bausteine
@@ -253,6 +253,7 @@ function shell(inner, active) {
   <main>${inner}</main>
   <nav class="tabs">
     <a href="#/" class="${active === 'home' ? 'on' : ''}">Fahrzeuge</a>
+    <a href="#/defects" class="${active === 'defects' ? 'on' : ''}">Mängel${S.openCount ? ` <span class="nbadge">${S.openCount}</span>` : ''}</a>
     <a href="#/history" class="${active === 'history' ? 'on' : ''}">Verlauf</a>
     <a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${admin ? 'Einstellungen' : 'Konto'}</a>
   </nav>`;
@@ -359,9 +360,14 @@ async function afterLogin(w) {
 // Ansicht: Fahrzeugliste
 // ======================================================================
 async function viewHome() {
-  const [vs, checks] = await Promise.all([api.listVehicles(), api.lastChecks()]);
+  const [vs, checks, defects] = await Promise.all([api.listVehicles(), api.lastChecks(), api.openDefects()]);
+  S.openCount = defects.length;
   const last = {};
   for (const c of checks) if (!last[c.vehicle_id]) last[c.vehicle_id] = c;
+  const defOf = {};
+  for (const d of defects) (defOf[d.check.vehicle_id] ||= []).push(d);
+  let nDue = 0;
+  let nNever = 0;
   const urls = await Promise.all(vs.map((v) => api.photoUrl(v.photo_path)));
   const admin = S.role === 'admin';
 
@@ -376,10 +382,21 @@ async function viewHome() {
       }
       const l = last[v.id];
       const draft = getDraft(v.id);
+      const ds = defOf[v.id] || [];
+      const nOpen = ds.filter((x) => x.resolved_status === 'open').length;
+      const nProg = ds.length - nOpen;
+      const reasons = [];
+      let lamp = 'green';
+      if (nOpen) { lamp = 'red'; reasons.push(nOpen === 1 ? '1 offener Mangel' : `${nOpen} offene Mängel`); }
+      if (nProg) { if (lamp === 'green') lamp = 'yellow'; reasons.push(`${nProg} in Arbeit`); }
+      if (d !== null && d < 0) { lamp = 'red'; nDue++; reasons.push('Prüfung überfällig'); }
+      else if (d !== null && d <= 30) { if (lamp === 'green') lamp = 'yellow'; nDue++; reasons.push('Prüfung bald fällig'); }
+      if (!l) { nNever++; if (lamp === 'green') lamp = 'yellow'; reasons.push('noch nie geprüft'); }
       return `<a class="card vcard" href="#/v/${v.id}">
         <div class="thumb">${urls[i] ? `<img src="${esc(urls[i])}" alt="">` : '<span>Kein Foto</span>'}</div>
         <div class="vinfo">
-          <strong>${esc(v.name)}</strong>
+          <strong><span class="lamp ${lamp}" aria-label="${lamp === 'green' ? 'in Ordnung' : lamp === 'yellow' ? 'Achtung' : 'Handlungsbedarf'}"></span>${esc(v.name)}</strong>
+          ${reasons.length ? `<div class="reasons ${lamp}">${esc(reasons.join(', '))}</div>` : '<div class="reasons green">In Ordnung</div>'}
           <div class="muted">${esc([v.type, v.location].filter(Boolean).join(', '))}</div>
           ${due}
           <div class="muted">${l ? `Letzter Check: ${fmtDateTime(l.created_at)}, ${esc(l.member_name)}` : 'Noch kein Check'}</div>
@@ -391,6 +408,11 @@ async function viewHome() {
   return {
     active: 'home',
     html: `<h2>Fahrzeuge</h2>
+      ${vs.length ? `<div class="tiles">
+        <a class="tile ${defects.length ? 'red' : 'green'}" href="#/defects"><b>${defects.length}</b><span>offene Mängel</span></a>
+        <div class="tile ${nDue ? 'yellow' : 'green'}"><b>${nDue}</b><span>Prüfung fällig</span></div>
+        <div class="tile ${nNever ? 'yellow' : 'green'}"><b>${nNever}</b><span>nie geprüft</span></div>
+      </div>` : ''}
       ${vs.length ? `<div class="list">${cards}</div>` : `<p class="muted">${admin ? 'Noch kein Fahrzeug. Lege das erste an.' : 'Der Admin hat noch kein Fahrzeug angelegt.'}</p>`}
       ${admin ? '<button class="btn primary block" id="add-v">+ Fahrzeug anlegen</button>' : ''}`,
     bind() {
@@ -1074,6 +1096,80 @@ async function viewArea(vid, aid) {
 }
 
 // ======================================================================
+// Ansicht: Mängel (offen bis behoben)
+// ======================================================================
+async function viewDefects() {
+  const [vs, defects, fixed] = await Promise.all([api.listVehicles(), api.openDefects(), api.fixedDefects(20)]);
+  S.openCount = defects.length;
+  const admin = S.role === 'admin';
+  const vname = {};
+  for (const v of vs) vname[v.id] = v.name;
+  const all = [...defects, ...fixed];
+  const thumbs = await Promise.all(all.map((r) => api.photoUrl(r.photo_path)));
+  const turl = {};
+  all.forEach((r, i) => (turl[r.id] = thumbs[i]));
+
+  const entry = (r, isFixed) => {
+    const st = r.resolved_status;
+    return `<li class="defect">
+      <div class="dtop"><span class="badge bad">${STATUS[r.status].long}</span>
+        <span class="badge ${st === 'fixed' ? 'ok' : st === 'progress' ? 'part' : 'bad'}">${st === 'fixed' ? 'Behoben' : st === 'progress' ? 'In Arbeit' : 'Offen'}</span></div>
+      <strong>${esc(r.item_name)}</strong> <span class="muted">${esc(r.area_name || '')}</span>
+      <div class="muted">Gefunden ${fmtDateTime(r.check.created_at)}, ${esc(r.check.member_name)}</div>
+      ${r.note ? `<div>${esc(r.note)}</div>` : ''}
+      ${st !== 'open' && r.resolved_at ? `<div class="muted">${st === 'fixed' ? 'Behoben' : 'In Arbeit seit'} ${fmtDateTime(r.resolved_at)}, ${esc(r.resolved_by || '')}${r.resolve_note ? ': ' + esc(r.resolve_note) : ''}</div>` : ''}
+      ${turl[r.id] ? `<a href="${esc(turl[r.id])}" target="_blank" rel="noopener"><img class="rthumb" src="${esc(turl[r.id])}" alt="Foto"></a>` : ''}
+      ${admin ? `<div class="stack">
+        ${st !== 'progress' && !isFixed ? `<button class="btn small" data-def="${r.id}" data-to="progress">In Arbeit</button>` : ''}
+        ${!isFixed ? `<button class="btn small primary" data-def="${r.id}" data-to="fixed">Behoben</button>` : ''}
+        ${st !== 'open' ? `<button class="btn small" data-def="${r.id}" data-to="open">Wieder offen</button>` : ''}
+      </div>` : ''}
+    </li>`;
+  };
+  const group = (list, isFixed) => {
+    const by = {};
+    for (const r of list) (by[r.check.vehicle_id] ||= []).push(r);
+    return Object.keys(by)
+      .map((vid) => `<div class="card pad"><h3>${esc(vname[vid] || 'Fahrzeug')}</h3><ul class="rlist">${by[vid].map((r) => entry(r, isFixed)).join('')}</ul></div>`)
+      .join('');
+  };
+
+  return {
+    active: 'defects',
+    html: `<h2>Mängel</h2>
+      ${defects.length ? group(defects, false) : '<p class="muted">Keine offenen Mängel.</p>'}
+      ${fixed.length ? `<h3>Zuletzt behoben</h3>${group(fixed, true)}` : ''}
+      <p class="muted">Ein Mangel gilt auch als erledigt, wenn der Gegenstand bei einem späteren Check wieder mit OK abgehakt wird.</p>`,
+    bind() {
+      document.querySelectorAll('[data-def]').forEach((b) => {
+        b.onclick = async () => {
+          const to = b.dataset.to;
+          let note = '';
+          if (to === 'fixed' || to === 'progress') {
+            const r = await modal({
+              title: to === 'fixed' ? 'Mangel als behoben melden' : 'Mangel in Arbeit setzen',
+              body: field('Kommentar (optional)', 'c', { textarea: true, placeholder: to === 'fixed' ? 'z. B. Ersatz beschafft' : 'z. B. Teil bestellt' }),
+              ok: 'Speichern',
+            });
+            if (!r) return;
+            note = r.c.trim();
+          }
+          busy(true);
+          try {
+            await api.setDefectState(b.dataset.def, to, S.name || 'Admin', note);
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+          route();
+        };
+      });
+    },
+  };
+}
+
+// ======================================================================
 // Ansicht: Verlauf
 // ======================================================================
 async function viewHistory() {
@@ -1256,6 +1352,7 @@ export async function route() {
     busy(true);
     if (parts[0] === 'v' && parts[1] && parts[2] === 'a' && parts[3]) view = await viewArea(parts[1], parts[3]);
     else if (parts[0] === 'v' && parts[1]) view = await viewVehicle(parts[1]);
+    else if (parts[0] === 'defects') view = await viewDefects();
     else if (parts[0] === 'history') view = await viewHistory();
     else if (parts[0] === 'settings') view = await viewSettings();
     else view = await viewHome();

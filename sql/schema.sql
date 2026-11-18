@@ -89,6 +89,19 @@ create table if not exists public.check_results (
 );
 create index if not exists check_results_check_idx on public.check_results(check_id);
 
+-- Mängelverfolgung: Bearbeitungsstand je Ergebnis (nur für fehlt/defekt relevant)
+alter table public.check_results add column if not exists resolved_status text not null default 'open';
+alter table public.check_results add column if not exists resolved_at timestamptz;
+alter table public.check_results add column if not exists resolved_by text;
+alter table public.check_results add column if not exists resolve_note text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'check_results_resolved_status_chk') then
+    alter table public.check_results add constraint check_results_resolved_status_chk
+      check (resolved_status in ('open','progress','fixed'));
+  end if;
+end $$;
+create index if not exists check_results_open_idx on public.check_results(resolved_status) where status <> 'ok';
+
 -- ---------------------------------------------------------------
 -- Hilfsfunktionen
 -- ---------------------------------------------------------------
@@ -259,6 +272,9 @@ create policy results_insert on public.check_results for insert
     public.can_read()
     and exists (select 1 from public.checks c where c.id = check_id and c.user_id = auth.uid())
   );
+drop policy if exists results_update on public.check_results;
+create policy results_update on public.check_results for update
+  using (public.is_admin()) with check (public.is_admin());
 drop policy if exists results_delete on public.check_results;
 create policy results_delete on public.check_results for delete using (public.is_admin());
 

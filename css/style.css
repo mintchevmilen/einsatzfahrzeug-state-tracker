@@ -140,3 +140,14 @@ input[type=checkbox] { width: auto; }
 .filebtn { position: relative; overflow: hidden; display: inline-flex; align-items: center; }
 .filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .fname { margin-top: 6px; word-break: break-all; }
+
+.lamp { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
+.lamp.green { background: var(--ok, #2e7d32); } .lamp.yellow { background: #f9a825; } .lamp.red { background: var(--bad, #c62828); }
+.reasons { font-size: .9rem; } .reasons.green { color: #2e7d32; } .reasons.yellow { color: #8a6100; } .reasons.red { color: #c62828; font-weight: 600; }
+.tiles { display: flex; gap: 8px; margin-bottom: 12px; }
+.tile { flex: 1; border-radius: 12px; padding: 10px 6px; text-align: center; text-decoration: none; color: #fff; display: flex; flex-direction: column; }
+.tile b { font-size: 1.6rem; line-height: 1.1; } .tile span { font-size: .78rem; }
+.tile.green { background: #2e7d32; } .tile.yellow { background: #b27b00; } .tile.red { background: #c62828; }
+.nbadge { background: #c62828; color: #fff; border-radius: 10px; padding: 0 6px; font-size: .75rem; margin-left: 3px; }
+.defect { list-style: none; padding: 10px 0; border-top: 1px solid #e3e8ee; } .defect:first-child { border-top: 0; }
+.dtop { display: flex; gap: 6px; margin-bottom: 4px; }

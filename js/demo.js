@@ -150,7 +150,7 @@
       if (!m.role) return err('Kein Zugriff');
       const rows = db[table];
       const write = st.op !== 'select';
-      const adminOnly = ['vehicles', 'areas', 'items'].includes(table) || (table === 'checks' && st.op === 'delete') || (table === 'check_results' && st.op === 'delete');
+      const adminOnly = ['vehicles', 'areas', 'items'].includes(table) || (table === 'checks' && st.op === 'delete') || (table === 'check_results' && st.op !== 'insert');
       if (write && adminOnly && m.role !== 'admin') return err('new row violates row-level security policy');
       let out;
       if (st.op === 'insert') {
@@ -160,6 +160,7 @@
           if (table === 'items') { r.qty = r.qty ?? 1; r.x = r.x ?? null; r.y = r.y ?? null; r.note = r.note ?? null; }
           if (table === 'areas') { r.x = r.x ?? null; r.y = r.y ?? null; r.photo_path = r.photo_path ?? null; }
           if (table === 'vehicles') { r.photo_path = r.photo_path ?? null; }
+          if (table === 'check_results') { r.resolved_status = r.resolved_status ?? 'open'; r.resolved_at = null; r.resolved_by = null; r.resolve_note = null; }
           if (table === 'checks') { r.user_id = s.id; r.member_name = m.role === 'member' ? m.name : p.member_name || 'Admin'; }
           rows.push(r);
           return r;

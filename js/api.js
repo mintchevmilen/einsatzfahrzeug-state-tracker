@@ -140,6 +140,47 @@ export const problemResults = async (checkIds) => {
   if (!checkIds.length) return [];
   return ok(await sb.from('check_results').select('check_id,status').in('check_id', checkIds).neq('status', 'ok'));
 };
+const chunk = (a, n = 40) => {
+  const o = [];
+  for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n));
+  return o;
+};
+// Offene Mängel: fehlt/defekt, nicht behoben, und es ist das neueste Ergebnis dieses Gegenstands
+export async function openDefects() {
+  const rs = ok(
+    await sb.from('check_results').select('*').neq('status', 'ok').neq('resolved_status', 'fixed').order('created_at', { ascending: false }).limit(500)
+  );
+  if (!rs.length) return [];
+  const itemIds = [...new Set(rs.map((r) => r.item_id).filter(Boolean))];
+  const checkIds = [...new Set(rs.map((r) => r.check_id))];
+  const [hist, checks] = await Promise.all([
+    Promise.all(chunk(itemIds).map(async (ids) => ok(await sb.from('check_results').select('item_id,created_at').in('item_id', ids).order('created_at', { ascending: false }).limit(1000)))),
+    Promise.all(chunk(checkIds).map(async (ids) => ok(await sb.from('checks').select('id,vehicle_id,member_name,created_at').in('id', ids)))),
+  ]);
+  const latest = {};
+  for (const h of hist.flat()) if (!latest[h.item_id] || h.created_at > latest[h.item_id]) latest[h.item_id] = h.created_at;
+  const cmap = {};
+  for (const c of checks.flat()) cmap[c.id] = c;
+  return rs
+    .filter((r) => !r.item_id || !latest[r.item_id] || r.created_at >= latest[r.item_id])
+    .map((r) => ({ ...r, check: cmap[r.check_id] || null }))
+    .filter((r) => r.check);
+}
+export async function fixedDefects(limit = 20) {
+  const rs = ok(await sb.from('check_results').select('*').neq('status', 'ok').eq('resolved_status', 'fixed').order('resolved_at', { ascending: false }).limit(limit));
+  if (!rs.length) return [];
+  const checks = ok(await sb.from('checks').select('id,vehicle_id,member_name,created_at').in('id', [...new Set(rs.map((r) => r.check_id))]));
+  const cmap = {};
+  for (const c of checks) cmap[c.id] = c;
+  return rs.map((r) => ({ ...r, check: cmap[r.check_id] || null })).filter((r) => r.check);
+}
+export const setDefectState = async (id, state, by, note) =>
+  ok(
+    await sb
+      .from('check_results')
+      .update({ resolved_status: state, resolved_at: state === 'open' ? null : new Date().toISOString(), resolved_by: state === 'open' ? null : by, resolve_note: note || null })
+      .eq('id', id)
+  );
 export const resultsForCheck = async (checkId) =>
   ok(await sb.from('check_results').select('*').eq('check_id', checkId).order('area_name').order('item_name'));
 export const deleteCheck = async (id) => ok(await sb.from('checks').delete().eq('id', id));
