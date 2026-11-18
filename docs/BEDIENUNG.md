@@ -64,3 +64,20 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Einstellungen: "Daten herunterladen (JSON)" sichert Fahrzeuge, Fächer, Gegenstände und Checks. Fotos sind nicht enthalten, nur ihre Pfade. Das ist eine Sicherung, noch kein Import für die Übergabe.
 - Für bestehende Datenbanken: `sql/schema.sql` nochmal ausführen oder nur den Block "Prüfintervall".
 - Erinnerungen per E Mail gibt es nicht. Die Ampel und die Kachel "Prüfung fällig" zeigen Fristen in der App.
+
+## Checklisten und Intervalle (neu)
+- Im Fahrzeug als Admin: Bearbeiten einschalten, dann "Checklisten". Vorlagen Wöchentlich (7 Tage), Monatlich (30), Jährlich (365) oder eigene mit freier Tageszahl.
+- Jeden Gegenstand kannst du einer Checkliste zuordnen. Ohne Zuordnung gehört er zu jedem Check.
+- Beim Start eines Checks wählt man die Checkliste oder "Alle Gegenstände". Ein voller Check zählt für alle Checklisten.
+- Die Fälligkeit ist der letzte passende Check plus Intervall. Das Fahrzeug zeigt die Ampel dazu.
+
+## Offline und Warteschlange (neu)
+- Ohne Netz kann man einen Check abschließen. Er wird auf dem Gerät gespeichert, im Verlauf als "Wartet" gezeigt und beim nächsten Netz automatisch gesendet. Der Knopf "Jetzt senden" geht auch von Hand.
+- Doppelt gesendete Checks gibt es nicht, jeder Check hat eine feste Nummer.
+- Wichtig: Die App muss einmal mit Netz geöffnet worden sein, damit Fahrzeuge und Gegenstände zwischengespeichert sind. Fahrzeuge bearbeiten geht nur mit Netz.
+
+## Statistik, QR Codes, Fahrzeugblatt, Excel (neu)
+- Statistik (nur Admin): Zeitraum 30, 90 oder 365 Tage, Kacheln, Checks pro Monat, Fristen, häufigste Mängel.
+- QR Codes: im Fahrzeug unter Werkzeuge, für das Fahrzeug und optional jedes Fach. Der Druckdialog bietet "Als PDF speichern".
+- Fahrzeugblatt: ein PDF mit Fahrzeug, Fächern und Gegenständen.
+- Excel: je Fahrzeug im Fahrzeug, alles zusammen in den Einstellungen, Verlauf und Mängel haben eigene Knöpfe.

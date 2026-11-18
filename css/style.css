@@ -162,3 +162,22 @@ input[type=checkbox] { width: auto; }
   #printarea img { max-width: 5cm; max-height: 4cm; margin-top: 4px; }
   #printarea tr { page-break-inside: avoid; }
 }
+
+.strip { padding: 8px 12px; font-size: .9rem; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.strip.off { background: #fde7c3; color: #6b3b00; } .strip.pend { background: #dde6f0; color: #1d3b5c; }
+.pendcard { border-left: 4px solid #f9a825; }
+.tag { display: inline-block; background: #e3e8ee; border-radius: 6px; padding: 0 6px; font-size: .75rem; margin-top: 2px; }
+.clrow { display: flex; align-items: center; padding: 6px 0; border-top: 1px solid #eef1f5; } .clrow:first-of-type { border-top: 0; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .9rem; } .tbl th, .tbl td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eef1f5; }
+.hrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; } .hrow b { min-width: 24px; text-align: right; }
+.bar { width: 90px; height: 10px; background: #e3e8ee; border-radius: 5px; overflow: hidden; display: inline-block; } .bar > span { display: block; height: 100%; background: var(--brand2, #1f4e79); }
+.mchart { display: flex; align-items: flex-end; gap: 6px; height: 150px; padding-top: 10px; }
+.mcol { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.mbar { width: 70%; background: var(--brand2, #1f4e79); border-radius: 4px 4px 0 0; min-height: 2px; } .mval { font-size: .75rem; } .mlab { font-size: .7rem; color: #5b6b7b; }
+.qrgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.qrlabel { border: 1px dashed #999; padding: 8px; text-align: center; page-break-inside: avoid; font-size: 10pt; }
+.qrsvg svg { width: 5cm; height: 5cm; } .qrsvg.small svg { width: 3cm; height: 3cm; }
+.sheethead { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.sheetphoto { max-width: 100%; max-height: 8cm; display: block; margin: 8px 0; }
+@media print { #printarea h2 { font-size: 13pt; margin: 14px 0 4px; } }
+@media (max-width: 460px) { nav.tabs a { font-size: .8rem; padding: 14px 2px; } }

@@ -99,11 +99,15 @@
       ],
       checks: [],
       check_results: [],
+      checklists: [],
       members: [],
     };
   }
 
-  let db = param === 'empty' ? { vehicles: [], areas: [], items: [], checks: [], check_results: [], members: [] } : load(DB, null) || seed();
+  let db = param === 'empty' ? { vehicles: [], areas: [], items: [], checks: [], check_results: [], checklists: [], members: [] } : load(DB, null) || seed();
+  db.checklists = db.checklists || [];
+  const netdown = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+  const netErr = () => ({ data: null, error: { message: 'TypeError: Failed to fetch' } });
   const save = () => localStorage.setItem(DB, JSON.stringify(db));
   save();
 
@@ -133,6 +137,9 @@
     const b = {
       select(c) { st.cols = c || '*'; if (st.op !== 'select') st.ret = true; return b; },
       insert(p) { st.op = 'insert'; st.payload = p; return b; },
+      upsert(p, o) { st.op = 'insert'; st.payload = p; st.ignoreDup = true; return b; },
+      gte(c, v) { st.filters.push((r) => r[c] >= v); return b; },
+      range(a, z) { st.range = [a, z]; return b; },
       update(p) { st.op = 'update'; st.payload = p; return b; },
       delete() { st.op = 'delete'; return b; },
       eq(c, v) { st.filters.push((r) => r[c] === v); return b; },
@@ -144,22 +151,24 @@
       then(res, rej) { return Promise.resolve(run()).then(res, rej); },
     };
     function run() {
+      if (netdown()) return netErr();
       const s = sess();
       if (!s) return err('Nicht angemeldet');
       const m = me();
       if (!m.role) return err('Kein Zugriff');
       const rows = db[table];
       const write = st.op !== 'select';
-      const adminOnly = ['vehicles', 'areas', 'items'].includes(table) || (table === 'checks' && st.op === 'delete') || (table === 'check_results' && st.op !== 'insert');
+      const adminOnly = ['vehicles', 'areas', 'items', 'checklists'].includes(table) || (table === 'checks' && st.op === 'delete') || (table === 'check_results' && st.op !== 'insert');
       if (write && adminOnly && m.role !== 'admin') return err('new row violates row-level security policy');
       let out;
       if (st.op === 'insert') {
         const arr = Array.isArray(st.payload) ? st.payload : [st.payload];
-        out = arr.map((p) => {
+        out = arr.filter((p) => !(st.ignoreDup && p.id && rows.some((x) => x.id === p.id))).map((p) => {
           const r = { id: uid(), created_at: new Date().toISOString(), ...p };
-          if (table === 'items') { r.qty = r.qty ?? 1; r.x = r.x ?? null; r.y = r.y ?? null; r.note = r.note ?? null; }
+          if (table === 'items') { r.checklist_id = r.checklist_id ?? null; r.qty = r.qty ?? 1; r.x = r.x ?? null; r.y = r.y ?? null; r.note = r.note ?? null; }
           if (table === 'areas') { r.x = r.x ?? null; r.y = r.y ?? null; r.photo_path = r.photo_path ?? null; }
           if (table === 'vehicles') { r.photo_path = r.photo_path ?? null; }
+          if (table === 'checklists') { r.interval_days = r.interval_days ?? null; r.sort = r.sort ?? 0; }
           if (table === 'check_results') { r.resolved_status = r.resolved_status ?? 'open'; r.resolved_at = null; r.resolved_by = null; r.resolve_note = null; }
           if (table === 'checks') { r.user_id = s.id; r.member_name = m.role === 'member' ? m.name : p.member_name || 'Admin'; }
           rows.push(r);
@@ -176,8 +185,13 @@
             db.areas = db.areas.filter((a) => !aids.includes(a.id));
             db.items = db.items.filter((i) => !aids.includes(i.area_id));
             db.checks = db.checks.filter((c) => !sel.some((v) => v.id === c.vehicle_id));
+            db.checklists = db.checklists.filter((c) => !sel.some((v) => v.id === c.vehicle_id));
           }
           if (table === 'areas') db.items = db.items.filter((i) => !sel.some((a) => a.id === i.area_id));
+          if (table === 'checklists') {
+            db.items.forEach((i) => { if (sel.some((c) => c.id === i.checklist_id)) i.checklist_id = null; });
+            db.checks.forEach((c) => { if (sel.some((x) => x.id === c.checklist_id)) c.checklist_id = null; });
+          }
         }
         out = sel;
       }
@@ -186,6 +200,7 @@
       out = out.slice();
       for (const [c, asc] of st.orders.slice().reverse()) out.sort((a, b2) => (a[c] > b2[c] ? 1 : a[c] < b2[c] ? -1 : 0) * (asc ? 1 : -1));
       if (st.lim) out = out.slice(0, st.lim);
+      if (st.range) out = out.slice(st.range[0], st.range[1] + 1);
       if (table === 'checks' && /vehicles\(/.test(st.cols)) out = out.map((c) => ({ ...c, vehicles: { name: (db.vehicles.find((v) => v.id === c.vehicle_id) || {}).name } }));
       out = JSON.parse(JSON.stringify(out));
       if (st.single) return out.length === 1 ? { data: out[0], error: null } : err('Keine Zeile');
@@ -213,6 +228,7 @@
       async signOut() { setSess(null); return { error: null }; },
     },
     async rpc(name, a) {
+      if (netdown()) return netErr();
       const s = sess();
       if (name === 'whoami') return { data: me(), error: null };
       if (name === 'check_code') return { data: a.p_code.trim() === settings.team_code, error: null };
@@ -246,6 +262,7 @@
       from() {
         return {
           async upload(path, blob) {
+            if (netdown()) return netErr();
             files[path] = await readAsDataURL(blob);
             saveFiles();
             return { data: { path }, error: null };
@@ -256,6 +273,7 @@
             return { data: [], error: null };
           },
           async createSignedUrl(path) {
+            if (netdown()) return netErr();
             const u = files[path] || seedFiles[path];
             return u ? { data: { signedUrl: u }, error: null } : { data: null, error: { message: 'Foto fehlt' } };
           },

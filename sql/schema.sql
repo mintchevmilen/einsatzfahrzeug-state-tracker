@@ -89,6 +89,22 @@ create table if not exists public.check_results (
 );
 create index if not exists check_results_check_idx on public.check_results(check_id);
 
+-- Checklisten je Fahrzeug (mit optionalem Intervall in Tagen)
+create table if not exists public.checklists (
+  id uuid primary key default gen_random_uuid(),
+  vehicle_id uuid not null references public.vehicles(id) on delete cascade,
+  name text not null,
+  interval_days int check (interval_days is null or interval_days between 1 and 730),
+  sort int not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists checklists_vehicle_idx on public.checklists(vehicle_id);
+-- Gegenstände ohne Checkliste gehören zu jedem Check
+alter table public.items add column if not exists checklist_id uuid references public.checklists(id) on delete set null;
+alter table public.checks add column if not exists checklist_id uuid references public.checklists(id) on delete set null;
+alter table public.checks add column if not exists checklist_name text;
+alter table public.checklists enable row level security;
+
 -- Mängelverfolgung: Bearbeitungsstand je Ergebnis (nur für fehlt/defekt relevant)
 alter table public.check_results add column if not exists resolved_status text not null default 'open';
 alter table public.check_results add column if not exists resolved_at timestamptz;
@@ -256,6 +272,12 @@ drop policy if exists areas_select on public.areas;
 create policy areas_select on public.areas for select using (public.can_read());
 drop policy if exists areas_admin on public.areas;
 create policy areas_admin on public.areas for all
+  using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists checklists_select on public.checklists;
+create policy checklists_select on public.checklists for select using (public.can_read());
+drop policy if exists checklists_admin on public.checklists;
+create policy checklists_admin on public.checklists for all
   using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists items_select on public.items;

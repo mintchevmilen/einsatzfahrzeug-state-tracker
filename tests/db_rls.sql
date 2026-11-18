@@ -114,6 +114,32 @@ select t.run('interval 61 rejected', 'aaaaaaaa-0000-0000-0000-000000000001','aut
 select t.run('member cannot set interval', 'dddddddd-0000-0000-0000-000000000004','authenticated',
  $$ with x as (update public.vehicles set inspection_months=3 returning 1) select count(*)::text from x $$, '0');
 
+-- Checklisten
+select t.run('admin creates checklist', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (insert into public.checklists(vehicle_id,name,interval_days) select id,'Woechentlich',7 from public.vehicles limit 1 returning 1) select count(*)::text from x $$, '1');
+select t.run('member can read checklists', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ select count(*)::text from public.checklists $$, '1');
+select t.run('stranger cannot read checklists', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
+ $$ select count(*)::text from public.checklists $$, '0');
+select t.run('member cannot create checklist', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.checklists(vehicle_id,name,interval_days) select id,'X',7 from public.vehicles limit 1 returning 1 $$, 'fail');
+select t.run('member cannot update checklist', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.checklists set name='Hack' returning 1) select count(*)::text from x $$, '0');
+select t.run('member cannot delete checklist', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (delete from public.checklists returning 1) select count(*)::text from x $$, '0');
+select t.run('checklist interval 0 rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.checklists set interval_days=0 returning 1 $$, 'fail');
+select t.run('checklist interval 731 rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.checklists set interval_days=731 returning 1 $$, 'fail');
+select t.run('checklist without interval allowed', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.checklists set interval_days=null returning 1) select count(*)::text from x $$, '1');
+select t.run('admin assigns item to checklist', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.items set checklist_id=(select id from public.checklists limit 1) where id=(select id from public.items limit 1) returning 1) select count(*)::text from x $$, '1');
+select t.run('admin deletes checklist', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with d as (delete from public.checklists returning 1) select count(*)::text from d $$, '1');
+select t.run('items kept, link cleared after checklist delete', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ select (select count(*) from public.items where checklist_id is not null)::text || '/' || (select count(*) from public.items)::text $$, '0/' || (select count(*) from public.items)::text);
+
 -- Admin Verwaltung
 select t.run('admin sees members', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select count(*)::text from public.members $$, '2');
 select t.run('admin remove member', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select public.remove_member('dddddddd-0000-0000-0000-000000000004')::text $$, '');

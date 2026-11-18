@@ -1,5 +1,6 @@
 import * as api from './api.js';
-import { esc, fmtDate, fmtDateTime, daysUntil, relPos, configured } from './api.js';
+import { esc, fmtDate, fmtDateTime, daysUntil, relPos, configured, uuid } from './api.js';
+import { isNetErr, pendingList, pendingCount, pendingPut, pendingGet, pendingRemove, blobPut, blobGet, blobDel } from './offline.js';
 
 const app = document.getElementById('app');
 const S = { role: null, name: null, org: '', uid: null, edit: false, moving: null, openCount: 0 };
@@ -22,6 +23,7 @@ function toast(msg, bad = false) {
 }
 function fail(e) {
   console.error(e);
+  if (isNetErr(e)) return toast('Keine Verbindung. Das geht nur mit Netz.', true);
   toast(e && e.message ? e.message : 'Fehler', true);
 }
 let busyCount = 0;
@@ -94,10 +96,11 @@ export function photoField() {
 export function field(label, name, o = {}) {
   const v = o.value ?? '';
   const req = o.required ? 'required' : '';
-  const micOk = Boolean(SR) && !o.nomic && !o.file && (o.textarea || !o.type || o.type === 'text');
+  const micOk = Boolean(SR) && !o.nomic && !o.file && !o.options && (o.textarea || !o.type || o.type === 'text');
   const mic = micOk ? `<button type="button" class="mic" data-mic aria-label="Diktieren" title="Diktieren">${MIC_SVG}</button>` : '';
   let input;
-  if (o.textarea) input = `<textarea name="${name}" rows="3" ${req} placeholder="${esc(o.placeholder || '')}">${esc(v)}</textarea>`;
+  if (o.options) input = `<select name="${name}">${o.options.map((x) => `<option value="${esc(x.value)}" ${String(x.value) === String(v) ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>`;
+  else if (o.textarea) input = `<textarea name="${name}" rows="3" ${req} placeholder="${esc(o.placeholder || '')}">${esc(v)}</textarea>`;
   else if (o.file) input = `<input type="file" name="${name}" accept="image/*">`;
   else
     input = `<input name="${name}" type="${o.type || 'text'}" value="${esc(v)}" ${req} ${o.attrs || ''} placeholder="${esc(o.placeholder || '')}" autocomplete="${o.autocomplete || 'off'}">`;
@@ -154,7 +157,7 @@ function modal({ title, body = '', ok = 'Speichern', actions = [] }) {
       if (e.target === ov) close(null);
     });
     const first = form.querySelector('input:not([type=file]),textarea');
-    if (first) setTimeout(() => first.focus(), 50);
+    if (first) first.focus();
   });
 }
 
@@ -231,6 +234,146 @@ function setDraft(vid, d) {
 function clearDraft(vid) {
   localStorage.removeItem(dkey(vid));
 }
+// Gegenstände ohne Checkliste gehören zu jedem Check
+const scopeItems = (items, draft) => (draft && draft.checklistId ? items.filter((i) => !i.checklist_id || i.checklist_id === draft.checklistId) : items);
+const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Wann wurde eine Checkliste zuletzt erledigt und wann ist sie wieder fällig?
+// Ein Check "alle Gegenstände" zählt für jede Checkliste. Wartende (noch nicht gesendete) Checks zählen mit.
+function checksOfVehicle(vid, checks) {
+  const pend = pendingList().filter((p) => p.vehicle_id === vid).map((p) => ({ vehicle_id: vid, created_at: p.created_at, checklist_id: p.checklist_id }));
+  return [...checks.filter((c) => c.vehicle_id === vid), ...pend];
+}
+function clStatus(cl, vchecks) {
+  const done = vchecks.filter((c) => !c.checklist_id || c.checklist_id === cl.id).map((c) => c.created_at).sort().pop() || null;
+  if (!cl.interval_days) return { last: done, due: null, days: null, never: !done };
+  if (!done) return { last: null, due: null, days: null, never: true };
+  const d = new Date(done);
+  d.setDate(d.getDate() + cl.interval_days);
+  const due = localDate(d);
+  return { last: done, due, days: daysUntil(due), never: false };
+}
+const clText = (st) =>
+  st.never ? 'noch nie gemacht' : st.days === null ? `zuletzt ${fmtDate(st.last)}` : st.days < 0 ? `überfällig seit ${-st.days} Tagen` : st.days === 0 ? 'heute fällig' : `fällig in ${st.days} Tagen`;
+const clLevel = (st, cl) => (st.never ? (cl.interval_days ? 'yellow' : 'green') : st.days === null ? 'green' : st.days < 0 ? 'red' : st.days <= 2 ? 'yellow' : 'green');
+
+// Drucken: füllt #printarea und öffnet den Druckdialog (dort "Als PDF speichern")
+async function printArea(html) {
+  let pa = document.getElementById('printarea');
+  if (!pa) {
+    pa = document.createElement('div');
+    pa.id = 'printarea';
+    document.body.appendChild(pa);
+  }
+  pa.innerHTML = html;
+  await Promise.all([...pa.querySelectorAll('img')].map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+  document.body.classList.add('printing');
+  const done = () => {
+    document.body.classList.remove('printing');
+    window.removeEventListener('afterprint', done);
+  };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+async function qrSvg(text, cell = 4) {
+  const mod = await import('../vendor/qrcode.mjs');
+  const q = mod.default(0, 'M');
+  q.addData(text);
+  q.make();
+  return q.createSvgTag({ cellSize: cell, margin: 2, scalable: true });
+}
+const baseUrl = () => location.origin + location.pathname;
+
+// ======================================================================
+// Warteschlange: fertige Checks werden zuerst lokal gespeichert und dann gesendet
+// ======================================================================
+let syncing = false;
+async function sendOne(rec) {
+  for (const r of rec.results) {
+    if (r.photo_local) {
+      const blob = await blobGet('pendphotos', r.photo_local);
+      if (blob) r.photo_path = await api.uploadPhoto(`checks/${S.uid}`, blob);
+      await blobDel('pendphotos', r.photo_local);
+      r.photo_local = null;
+      pendingPut(rec);
+    }
+  }
+  await api.createCheck({
+    id: rec.id,
+    vehicle_id: rec.vehicle_id,
+    member_name: rec.member_name,
+    note: rec.note,
+    checklist_id: rec.checklist_id,
+    checklist_name: rec.checklist_name,
+    created_at: rec.created_at,
+  });
+  await api.insertResults(
+    rec.results.map((r) => ({
+      id: r.id,
+      check_id: rec.id,
+      item_id: r.item_id,
+      item_name: r.item_name,
+      area_name: r.area_name,
+      status: r.status,
+      note: r.note,
+      photo_path: r.photo_path || null,
+      created_at: rec.created_at,
+    }))
+  );
+}
+async function syncPending() {
+  if (syncing || !S.role) return { sent: 0, left: pendingCount(), err: null };
+  syncing = true;
+  let sent = 0;
+  let err = null;
+  try {
+    for (const rec of pendingList()) {
+      try {
+        await sendOne(rec);
+        await pendingRemove(rec.id);
+        sent++;
+      } catch (e) {
+        err = e;
+        const cur = pendingGet(rec.id) || rec;
+        cur.error = isNetErr(e) ? null : (e && e.message) || String(e);
+        pendingPut(cur);
+        if (isNetErr(e)) break;
+      }
+    }
+  } finally {
+    syncing = false;
+  }
+  return { sent, left: pendingCount(), err };
+}
+async function trySync(rerender = true) {
+  if (!pendingCount() || !S.role) return;
+  const r = await syncPending();
+  if (r.sent) {
+    toast(r.sent === 1 ? '1 Check wurde gesendet' : `${r.sent} Checks wurden gesendet`);
+    if (rerender) route();
+  }
+}
+window.addEventListener('online', () => trySync(true));
+document.addEventListener('click', (e) => {
+  if (e.target.closest && e.target.closest('#sync-now')) {
+    busy(true);
+    syncPending()
+      .then((r) => {
+        if (r.sent) toast(`${r.sent} Check(s) gesendet`);
+        else if (r.err) fail(r.err);
+        route();
+      })
+      .finally(() => busy(false));
+  }
+});
+function pendingStrip() {
+  const n = pendingCount();
+  const off = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const errs = pendingList().filter((p) => p.error);
+  return `${off ? '<div class="strip off">Kein Netz. Checks werden gespeichert und später gesendet.</div>' : ''}${
+    n ? `<div class="strip pend">${n === 1 ? '1 Check wartet' : n + ' Checks warten'} auf das Senden${errs.length ? ' (Fehler: ' + esc(errs[0].error) + ')' : ''}. <button class="btn small" id="sync-now">Jetzt senden</button></div>` : ''
+  }`;
+}
 
 const STATUS = {
   ok: { label: 'OK', long: 'Vorhanden' },
@@ -250,11 +393,13 @@ function shell(inner, active) {
     <div class="brand">${esc(S.org || 'Fahrzeug Check')}</div>
     <div class="who">${admin ? 'Admin' : esc(S.name || '')}</div>
   </header>
+  ${pendingStrip()}
   <main>${inner}</main>
   <nav class="tabs">
     <a href="#/" class="${active === 'home' ? 'on' : ''}">Fahrzeuge</a>
     <a href="#/defects" class="${active === 'defects' ? 'on' : ''}">Mängel${S.openCount ? ` <span class="nbadge">${S.openCount}</span>` : ''}</a>
     <a href="#/history" class="${active === 'history' ? 'on' : ''}">Verlauf</a>
+    ${admin ? `<a href="#/stats" class="${active === 'stats' ? 'on' : ''}">Statistik</a>` : ''}
     <a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${admin ? 'Einstellungen' : 'Konto'}</a>
   </nav>`;
 }
@@ -284,7 +429,7 @@ function viewLogin() {
       ${DEMO ? `<div class="banner demohint">Testmodus ohne Datenbank.<br>Prüfer: Code <strong>${esc(DEMO.code)}</strong>, Name frei.<br>Admin: <strong>${esc(DEMO.admin.email)}</strong> und Passwort <strong>${esc(DEMO.admin.password)}</strong>.</div>` : ''}
       <div class="seg"><button type="button" id="t-member" class="on">Prüfer</button><button type="button" id="t-admin">Admin</button></div>
       <form id="f-member" class="card pad">
-        ${field('Einheitscode', 'code', { required: true, autocomplete: 'off', nomic: true, placeholder: 'Code von deinem Admin' })}
+        ${field('Teamcode', 'code', { required: true, autocomplete: 'off', nomic: true, placeholder: 'Code von deinem Admin' })}
         ${field('Dein Name', 'name', { required: true, value: lastName, autocomplete: 'name', nomic: true })}
         <button class="btn primary block" type="submit">Anmelden</button>
       </form>
@@ -360,7 +505,7 @@ async function afterLogin(w) {
 // Ansicht: Fahrzeugliste
 // ======================================================================
 async function viewHome() {
-  const [vs, checks, defects] = await Promise.all([api.listVehicles(), api.lastChecks(), api.openDefects()]);
+  const [vs, checks, defects, lists] = await Promise.all([api.listVehicles(), api.lastChecks(), api.openDefects(), api.allChecklists()]);
   S.openCount = defects.length;
   const last = {};
   for (const c of checks) if (!last[c.vehicle_id]) last[c.vehicle_id] = c;
@@ -391,7 +536,16 @@ async function viewHome() {
       if (nProg) { if (lamp === 'green') lamp = 'yellow'; reasons.push(`${nProg} in Arbeit`); }
       if (d !== null && d < 0) { lamp = 'red'; nDue++; reasons.push('Prüfung überfällig'); }
       else if (d !== null && d <= 30) { if (lamp === 'green') lamp = 'yellow'; nDue++; reasons.push('Prüfung bald fällig'); }
-      if (!l) { nNever++; if (lamp === 'green') lamp = 'yellow'; reasons.push('noch nie geprüft'); }
+      const vch = checksOfVehicle(v.id, checks);
+      let clDueFlag = false;
+      for (const cl of lists.filter((x) => x.vehicle_id === v.id)) {
+        const st = clStatus(cl, vch);
+        const lv = clLevel(st, cl);
+        if (lv === 'red') { lamp = 'red'; clDueFlag = true; reasons.push(`${cl.name} überfällig`); }
+        else if (lv === 'yellow') { if (lamp === 'green') lamp = 'yellow'; clDueFlag = true; reasons.push(st.never ? `${cl.name} noch nie gemacht` : `${cl.name} bald fällig`); }
+      }
+      if (clDueFlag && !(d !== null && d <= 30)) nDue++;
+      if (!l && !vch.length) { nNever++; if (lamp === 'green') lamp = 'yellow'; if (!clDueFlag) reasons.push('noch nie geprüft'); }
       return `<a class="card vcard" href="#/v/${v.id}">
         <div class="thumb">${urls[i] ? `<img src="${esc(urls[i])}" alt="">` : '<span>Kein Foto</span>'}</div>
         <div class="vinfo">
@@ -452,13 +606,15 @@ async function viewHome() {
 // Ansicht: Fahrzeug
 // ======================================================================
 async function viewVehicle(id) {
-  const [v, areas] = await Promise.all([api.getVehicle(id), api.listAreas(id)]);
-  const items = await api.listItemsForAreas(areas.map((a) => a.id));
+  const [v, areas, lists, allChecks] = await Promise.all([api.getVehicle(id), api.listAreas(id), api.listChecklists(id), api.lastChecks()]);
+  const itemsAll = await api.listItemsForAreas(areas.map((a) => a.id));
   const url = await api.photoUrl(v.photo_path);
   const admin = S.role === 'admin';
   const edit = admin && S.edit;
   const draft = getDraft(id);
+  const items = scopeItems(itemsAll, draft);
   const results = draft ? draft.results : {};
+  const vchecks = checksOfVehicle(id, allChecks);
 
   const stats = (a) => {
     const its = items.filter((i) => i.area_id === a.id);
@@ -499,15 +655,29 @@ async function viewVehicle(id) {
   if (!edit) {
     if (draft) {
       checkBar = `<div class="card pad checkbar">
-        <div><strong>Check läuft</strong><div class="muted">${doneItems} von ${totalItems} geprüft</div></div>
+        <div><strong>Check läuft${draft.checklistName ? ': ' + esc(draft.checklistName) : ''}</strong><div class="muted">${doneItems} von ${totalItems} geprüft</div></div>
         <div class="stack"><button class="btn primary" id="finish">Abschließen</button><button class="btn ghost" id="discard">Verwerfen</button></div></div>`;
     } else {
-      checkBar = `<button class="btn primary block" id="start" ${totalItems ? '' : 'disabled'}>Check starten</button>${
-        totalItems ? '' : '<p class="muted">Es sind noch keine Gegenstände angelegt.</p>'
+      checkBar = `<button class="btn primary block" id="start" ${itemsAll.length ? '' : 'disabled'}>Check starten</button>${
+        itemsAll.length ? '' : '<p class="muted">Es sind noch keine Gegenstände angelegt.</p>'
       }`;
     }
   }
 
+  const listBox = lists.length
+    ? `<div class="card pad"><h3>Checklisten</h3>${lists
+        .map((cl) => {
+          const st = clStatus(cl, vchecks);
+          return `<div class="clrow"><span class="lamp ${clLevel(st, cl)}"></span><span class="grow"><strong>${esc(cl.name)}</strong>${cl.interval_days ? ` <span class="muted">alle ${cl.interval_days} Tage</span>` : ''}<div class="muted">${esc(clText(st))}</div></span></div>`;
+        })
+        .join('')}</div>`
+    : '';
+  const toolsBox = admin && !edit
+    ? `<div class="card pad"><h3>Werkzeuge</h3><div class="stack wrap">
+        <button class="btn small" id="t-qr">QR Codes drucken</button>
+        <button class="btn small" id="t-sheet">Fahrzeugblatt (PDF)</button>
+        <button class="btn small" id="t-xlsx">Excel</button></div></div>`
+    : '';
   const movingBar = S.moving && S.moving.kind === 'area' ? `<div class="banner">Tippe auf das Foto, um die neue Position zu setzen. <button class="btn small" id="cancel-move">Abbrechen</button></div>` : '';
 
   const editPanel = edit
@@ -515,6 +685,7 @@ async function viewVehicle(id) {
         <div class="muted">Bearbeiten: Tippe auf das Foto, um ein Fach zu markieren. Tippe auf eine Nummer, um es zu ändern.</div>
         <div class="stack wrap">
           <button class="btn" id="e-vehicle">Fahrzeugdaten</button>
+          <button class="btn" id="e-lists">Checklisten (${lists.length})</button>
           <button class="btn" id="e-photo-cam">${v.photo_path ? 'Neues Foto (Kamera)' : 'Foto aufnehmen'}</button>
           <button class="btn" id="e-photo-file">Foto aus Dateien</button>
           <button class="btn" id="e-area">+ Fach ohne Markierung</button>
@@ -534,8 +705,10 @@ async function viewVehicle(id) {
       ${pinBox(url, pins, admin ? 'Noch kein Foto. Nimm ein Foto vom Fahrzeug auf.' : 'Kein Foto vorhanden')}
       ${editPanel}
       ${checkBar}
+      ${listBox}
       <h3>Fächer</h3>
-      <div class="rows">${areaRows || '<p class="muted">Noch keine Fächer.</p>'}</div>`,
+      <div class="rows">${areaRows || '<p class="muted">Noch keine Fächer.</p>'}</div>
+      ${toolsBox}`,
     bind() {
       const tg = document.getElementById('edit-toggle');
       if (tg)
@@ -732,16 +905,39 @@ async function viewVehicle(id) {
         }
       });
 
-      on('start', () => {
-        setDraft(id, { started: new Date().toISOString(), results: {} });
+      on('start', async () => {
+        let pick = { checklistId: null, checklistName: null };
+        if (lists.length) {
+          const r = await modal({
+            title: 'Welcher Check?',
+            body: '<p class="muted">Gegenstände ohne Zuordnung gehören zu jedem Check.</p>',
+            ok: '',
+            actions: [
+              ...lists.map((cl) => ({ key: 'cl:' + cl.id, label: `${cl.name} (${clText(clStatus(cl, vchecks))})` })),
+              { key: 'all', label: 'Alle Gegenstände (voller Check)' },
+            ],
+          });
+          if (!r) return;
+          if (r.__action.startsWith('cl:')) {
+            const cl = lists.find((x) => x.id === r.__action.slice(3));
+            pick = { checklistId: cl.id, checklistName: cl.name };
+          }
+        }
+        setDraft(id, { started: new Date().toISOString(), results: {}, ...pick });
         route();
       });
-      on('discard', () => {
+      on('discard', async () => {
         if (!confirm('Check verwerfen? Alle Häkchen gehen verloren.')) return;
+        const d = getDraft(id);
+        if (d) for (const r of Object.values(d.results)) if (r.photo_local) await blobDel('pendphotos', r.photo_local);
         clearDraft(id);
         route();
       });
       on('finish', () => finishCheck(v, areas, items));
+      on('e-lists', () => (location.hash = `#/v/${id}/lists`));
+      on('t-qr', () => vehicleQr(v, areas));
+      on('t-sheet', () => vehicleSheet(v, areas, itemsAll, lists, vchecks));
+      on('t-xlsx', () => excelExport(v.id));
     },
   };
 }
@@ -762,53 +958,61 @@ async function finishCheck(v, areas, items) {
     ok: 'Abschließen',
   });
   if (!r) return;
+  const areaName = Object.fromEntries(areas.map((a) => [a.id, a.name]));
+  const rec = {
+    id: draft.checkId || uuid(),
+    vehicle_id: v.id,
+    vehicle_name: v.name,
+    checklist_id: draft.checklistId || null,
+    checklist_name: draft.checklistName || null,
+    member_name: S.name || 'Admin',
+    note: (r.note || '').trim() || null,
+    created_at: new Date().toISOString(),
+    error: null,
+    results: items
+      .filter((i) => draft.results[i.id] && draft.results[i.id].status)
+      .map((i) => ({
+        id: uuid(),
+        item_id: i.id,
+        item_name: i.name,
+        area_name: areaName[i.area_id] || null,
+        status: draft.results[i.id].status,
+        note: draft.results[i.id].note || null,
+        photo_path: draft.results[i.id].photo_path || null,
+        photo_local: draft.results[i.id].photo_local || null,
+      })),
+  };
+  // Erst lokal sichern, dann senden. So geht nichts verloren, auch ohne Netz.
+  pendingPut(rec);
+  clearDraft(v.id);
   busy(true);
   try {
-    if (!draft.checkId) {
-      const chk = await api.createCheck({ vehicle_id: v.id, member_name: S.name || 'Admin', note: (r.note || '').trim() || null });
-      draft.checkId = chk.id;
-      setDraft(v.id, draft);
-    }
-    if (!draft.resultsSaved) {
-      const areaName = Object.fromEntries(areas.map((a) => [a.id, a.name]));
-      const rows = items
-        .filter((i) => draft.results[i.id] && draft.results[i.id].status)
-        .map((i) => ({
-          check_id: draft.checkId,
-          item_id: i.id,
-          item_name: i.name,
-          area_name: areaName[i.area_id] || null,
-          status: draft.results[i.id].status,
-          note: draft.results[i.id].note || null,
-          photo_path: draft.results[i.id].photo_path || null,
-        }));
-      await api.insertResults(rows);
-      draft.resultsSaved = true;
-      setDraft(v.id, draft);
-    }
-    clearDraft(v.id);
-    toast('Check gespeichert');
-    location.hash = '#/history';
-  } catch (e) {
-    fail(e);
+    const res = await syncPending();
+    if (!pendingGet(rec.id)) toast('Check gespeichert');
+    else if (res.err && !isNetErr(res.err)) toast('Gespeichert, Senden hat nicht geklappt: ' + (res.err.message || res.err), true);
+    else toast('Kein Netz. Der Check ist gespeichert und wird später gesendet.');
   } finally {
     busy(false);
   }
+  location.hash = '#/history';
+  route();
 }
 
 // ======================================================================
 // Ansicht: Fach
 // ======================================================================
 async function viewArea(vid, aid) {
-  const [v, areas] = await Promise.all([api.getVehicle(vid), api.listAreas(vid)]);
+  const [v, areas, lists] = await Promise.all([api.getVehicle(vid), api.listAreas(vid), api.listChecklists(vid)]);
   const area = areas.find((a) => a.id === aid);
   if (!area) throw new Error('Fach nicht gefunden');
-  const items = await api.listItemsForAreas([aid]);
+  const itemsAll = await api.listItemsForAreas([aid]);
   const url = await api.photoUrl(area.photo_path);
   const admin = S.role === 'admin';
   const edit = admin && S.edit;
   const draft = getDraft(vid);
   const checking = Boolean(draft) && !edit;
+  const items = checking ? scopeItems(itemsAll, draft) : itemsAll;
+  const listName = Object.fromEntries(lists.map((l) => [l.id, l.name]));
   const res = (id) => (draft && draft.results[id]) || {};
   const cls = (id) => res(id).status || '';
 
@@ -828,7 +1032,8 @@ async function viewArea(vid, aid) {
           <span class="num st-${r.status || 'none'}">${i + 1}</span>
           <div class="grow"><strong>${esc(it.name)}</strong>${it.qty > 1 ? ` <span class="qty">x ${it.qty}</span>` : ''}
             ${it.note ? `<div class="muted">${esc(it.note)}</div>` : ''}
-            <div class="rnote muted">${r.note ? esc(r.note) : ''}${r.photo_path ? ' (Foto)' : ''}</div>
+            ${edit && it.checklist_id ? `<span class="tag">${esc(listName[it.checklist_id] || '')}</span>` : ''}
+            <div class="rnote muted">${r.note ? esc(r.note) : ''}${r.photo_path || r.photo_local ? ' (Foto)' : ''}</div>
           </div>
           ${edit ? `<button class="btn small" data-edit="${it.id}">Ändern</button>` : ''}
         </div>
@@ -891,6 +1096,12 @@ async function viewArea(vid, aid) {
           body:
             field('Name', 'name', { value: it ? it.name : '', required: true, placeholder: 'z. B. Erste Hilfe Koffer' }) +
             field('Soll Menge', 'qty', { type: 'number', value: it ? it.qty : 1, attrs: 'min="0" inputmode="numeric"' }) +
+            (lists.length
+              ? field('Gehört zu Check', 'checklist_id', {
+                  options: [{ value: '', label: 'Jeder Check' }, ...lists.map((l) => ({ value: l.id, label: l.name }))],
+                  value: it ? it.checklist_id || '' : '',
+                })
+              : '') +
             field('Hinweis (optional)', 'note', { textarea: true, value: it ? it.note || '' : '' }),
           actions: it
             ? [
@@ -909,6 +1120,7 @@ async function viewArea(vid, aid) {
             area_id: aid,
             name: r.name.trim(),
             qty: Math.max(0, parseInt(r.qty, 10) || 1),
+            checklist_id: r.checklist_id || null,
             note: (r.note || '').trim() || null,
             x: pos ? pos.x : null,
             y: pos ? pos.y : null,
@@ -972,6 +1184,7 @@ async function viewArea(vid, aid) {
               id: it.id,
               name: r.name.trim(),
               qty: Math.max(0, parseInt(r.qty, 10) || 1),
+              checklist_id: r.checklist_id === undefined ? it.checklist_id : r.checklist_id || null,
               note: (r.note || '').trim() || null,
             });
           }
@@ -1051,7 +1264,7 @@ async function viewArea(vid, aid) {
           row.querySelectorAll('.st').forEach((b) => b.classList.toggle('on', b.dataset.st === r.status));
           const num = row.querySelector('.num');
           num.className = 'num st-' + (r.status || 'none');
-          row.querySelector('.rnote').textContent = (r.note || '') + (r.photo_path ? ' (Foto)' : '');
+          row.querySelector('.rnote').textContent = (r.note || '') + (r.photo_path || r.photo_local ? ' (Foto)' : '');
         }
         const pin = document.querySelector(`.pin[data-id="${iid}"]`);
         if (pin) pin.className = 'pin ' + (r.status || '');
@@ -1096,9 +1309,23 @@ async function viewArea(vid, aid) {
             cur.note = (r.note || '').trim() || null;
             const pf = [r.photocam, r.photo].find((f) => f && f.size);
             if (pf) {
-              const old = cur.photo_path;
-              cur.photo_path = await uploadFile(pf, `checks/${S.uid}`);
-              if (old) await api.removePhoto(old);
+              const oldPath = cur.photo_path;
+              const oldLocal = cur.photo_local;
+              const blob = await api.compressImage(pf);
+              try {
+                cur.photo_path = await api.uploadPhoto(`checks/${S.uid}`, blob);
+                cur.photo_local = null;
+                if (oldPath) await api.removePhoto(oldPath);
+              } catch (e) {
+                if (!isNetErr(e)) throw e;
+                // Kein Netz: Foto bleibt lokal und wird mit dem Check gesendet
+                const key = 'lp:' + uuid();
+                await blobPut('pendphotos', key, blob);
+                cur.photo_local = key;
+                cur.photo_path = null;
+                toast('Kein Netz. Das Foto wird später mit dem Check gesendet.');
+              }
+              if (oldLocal) await blobDel('pendphotos', oldLocal);
             }
             d.results[iid] = cur;
             setDraft(vid, d);
@@ -1160,8 +1387,11 @@ async function viewDefects() {
     html: `<h2>Mängel</h2>
       ${defects.length ? group(defects, false) : '<p class="muted">Keine offenen Mängel.</p>'}
       ${fixed.length ? `<h3>Zuletzt behoben</h3>${group(fixed, true)}` : ''}
-      <p class="muted">Ein Mangel gilt auch als erledigt, wenn der Gegenstand bei einem späteren Check wieder mit OK abgehakt wird.</p>`,
+      <p class="muted">Ein Mangel gilt auch als erledigt, wenn der Gegenstand bei einem späteren Check wieder mit OK abgehakt wird.</p>
+      ${admin ? '<button class="btn block" id="def-xlsx">Mängel als Excel herunterladen</button>' : ''}`,
     bind() {
+      const dx = document.getElementById('def-xlsx');
+      if (dx) dx.onclick = () => excelExport(null);
       document.querySelectorAll('[data-def]').forEach((b) => {
         b.onclick = async () => {
           const to = b.dataset.to;
@@ -1191,14 +1421,335 @@ async function viewDefects() {
 }
 
 // ======================================================================
+// Ansicht: Checklisten eines Fahrzeugs (nur Admin)
+// ======================================================================
+async function viewLists(vid) {
+  if (S.role !== 'admin') return viewVehicle(vid);
+  const [v, lists, areas] = await Promise.all([api.getVehicle(vid), api.listChecklists(vid), api.listAreas(vid)]);
+  const items = await api.listItemsForAreas(areas.map((a) => a.id));
+  const cnt = (id) => items.filter((i) => i.checklist_id === id).length;
+  const free = items.filter((i) => !i.checklist_id).length;
+  const rows = lists
+    .map(
+      (cl) => `<div class="card pad"><div class="ctop"><strong>${esc(cl.name)}</strong><span class="badge">${cl.interval_days ? 'alle ' + cl.interval_days + ' Tage' : 'ohne Frist'}</span></div>
+        <div class="muted">${cnt(cl.id)} eigene Gegenstände, dazu ${free} ohne Zuordnung</div>
+        <div class="stack"><button class="btn small" data-cl-edit="${cl.id}">Ändern</button><button class="btn small danger" data-cl-del="${cl.id}">Löschen</button></div></div>`
+    )
+    .join('');
+  const form = (cl) =>
+    modal({
+      title: cl ? 'Checkliste ändern' : 'Neue Checkliste',
+      body:
+        field('Name', 'name', { value: cl ? cl.name : '', required: true, placeholder: 'z. B. Wöchentlicher Check' }) +
+        field('Intervall in Tagen (leer = ohne Frist)', 'interval_days', { type: 'number', value: cl && cl.interval_days ? cl.interval_days : '', nomic: true, attrs: 'min="1" max="730" inputmode="numeric"', placeholder: '7 = wöchentlich, 30 = monatlich, 365 = jährlich' }),
+    });
+  const clean = (r) => ({ name: r.name.trim(), interval_days: Math.min(730, Math.max(1, parseInt(r.interval_days, 10) || 0)) || null });
+  return {
+    active: 'home',
+    html: `<a class="back" href="#/v/${vid}">‹ ${esc(v.name)}</a>
+      <h2>Checklisten</h2>
+      <p class="muted">Eine Checkliste ist ein Check mit eigener Frist, zum Beispiel wöchentlich oder jährlich. Ordne Gegenstände beim Bearbeiten einer Checkliste zu. Gegenstände ohne Zuordnung gehören zu jedem Check. Ein voller Check mit allen Gegenständen zählt für alle Checklisten.</p>
+      ${rows || '<p class="muted">Noch keine Checkliste. Ohne Checkliste gibt es einen einzigen Check mit allen Gegenständen.</p>'}
+      <div class="stack wrap"><button class="btn primary" id="cl-add">+ Neue Checkliste</button></div>
+      <div class="stack wrap"><button class="btn small" data-preset="Wöchentlich:7">+ Wöchentlich</button><button class="btn small" data-preset="Monatlich:30">+ Monatlich</button><button class="btn small" data-preset="Jährlich:365">+ Jährlich</button></div>`,
+    bind() {
+      const add = async (row) => {
+        busy(true);
+        try {
+          await api.saveChecklist({ vehicle_id: vid, sort: lists.length, ...row });
+        } catch (e) {
+          fail(e);
+        } finally {
+          busy(false);
+        }
+        route();
+      };
+      document.getElementById('cl-add').onclick = async () => {
+        const r = await form(null);
+        if (r) add(clean(r));
+      };
+      document.querySelectorAll('[data-preset]').forEach((b) => {
+        b.onclick = () => {
+          const [name, days] = b.dataset.preset.split(':');
+          add({ name, interval_days: Number(days) });
+        };
+      });
+      document.querySelectorAll('[data-cl-edit]').forEach((b) => {
+        b.onclick = async () => {
+          const cl = lists.find((x) => x.id === b.dataset.clEdit);
+          const r = await form(cl);
+          if (!r) return;
+          busy(true);
+          try {
+            await api.saveChecklist({ id: cl.id, ...clean(r) });
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+          route();
+        };
+      });
+      document.querySelectorAll('[data-cl-del]').forEach((b) => {
+        b.onclick = async () => {
+          const cl = lists.find((x) => x.id === b.dataset.clDel);
+          if (!confirm(`Checkliste "${cl.name}" löschen? Die Gegenstände bleiben erhalten und gehören dann zu jedem Check.`)) return;
+          busy(true);
+          try {
+            await api.deleteChecklist(cl.id);
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+          route();
+        };
+      });
+    },
+  };
+}
+
+// ======================================================================
+// QR Codes, Fahrzeugblatt, Excel
+// ======================================================================
+async function vehicleQr(v, areas) {
+  const r = await modal({
+    title: 'QR Codes drucken',
+    body: '<p class="muted">Der Code öffnet die Seite direkt. Wer nicht angemeldet ist, meldet sich erst an und landet dann am Ziel. Im Druckdialog "Als PDF speichern" oder direkt drucken.</p>',
+    ok: '',
+    actions: [
+      { key: 'v', label: 'Nur das Fahrzeug' },
+      { key: 'all', label: `Fahrzeug und alle ${areas.length} Fächer` },
+    ],
+  });
+  if (!r) return;
+  const base = baseUrl();
+  const labels = [{ title: v.name, sub: 'Fahrzeug', url: `${base}#/v/${v.id}` }];
+  if (r.__action === 'all') for (const a of areas) labels.push({ title: a.name, sub: `${v.name}, Fach`, url: `${base}#/v/${v.id}/a/${a.id}` });
+  busy(true);
+  try {
+    const svgs = await Promise.all(labels.map((l) => qrSvg(l.url)));
+    await printArea(
+      `<h1>QR Codes ${esc(v.name)}</h1><div class="qrgrid">${labels
+        .map((l, i) => `<div class="qrlabel"><div class="qrsvg">${svgs[i]}</div><strong>${esc(l.title)}</strong><div>${esc(l.sub)}</div></div>`)
+        .join('')}</div>`
+    );
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+async function vehicleSheet(v, areas, items, lists, vchecks) {
+  busy(true);
+  try {
+    const [defects, checks, url, qr] = await Promise.all([api.openDefects(), api.listChecks(50), api.photoUrl(v.photo_path), qrSvg(`${baseUrl()}#/v/${v.id}`)]);
+    const mine = defects.filter((d) => d.check.vehicle_id === v.id);
+    const lastChecks = checks.filter((c) => c.vehicle_id === v.id).slice(0, 8);
+    const probs = await api.problemResults(lastChecks.map((c) => c.id));
+    const pc = {};
+    for (const p of probs) pc[p.check_id] = (pc[p.check_id] || 0) + 1;
+    const lname = Object.fromEntries(lists.map((l) => [l.id, l.name]));
+    const rowsItems = areas
+      .flatMap((a) => items.filter((i) => i.area_id === a.id).map((i) => `<tr><td>${esc(a.name)}</td><td>${esc(i.name)}</td><td>${i.qty}</td><td>${esc(i.checklist_id ? lname[i.checklist_id] || '' : 'jeder Check')}</td><td>${esc(i.note || '')}</td></tr>`))
+      .join('');
+    const d = daysUntil(v.next_inspection);
+    await printArea(`<h1>Fahrzeugblatt ${esc(v.name)}</h1>
+      <div class="sheethead"><div>
+        <p>${esc(S.org || '')}<br>Stand: ${fmtDateTime(new Date().toISOString())}</p>
+        <p>${esc([v.type, v.location].filter(Boolean).join(', '))}</p>
+        ${v.next_inspection ? `<p>Nächste Prüfung (HU, UVV): ${fmtDate(v.next_inspection)}${v.inspection_months ? `, alle ${v.inspection_months} Monate` : ''}${d !== null && d < 0 ? ' (überfällig)' : ''}</p>` : ''}
+        ${v.notes ? `<p>${esc(v.notes)}</p>` : ''}</div>
+        <div class="qrsvg small">${qr}</div></div>
+      ${url ? `<img class="sheetphoto" src="${esc(url)}" alt="">` : ''}
+      ${lists.length ? `<h2>Checklisten</h2><table><thead><tr><th>Name</th><th>Frist</th><th>Zuletzt</th><th>Status</th></tr></thead><tbody>${lists
+        .map((cl) => {
+          const st = clStatus(cl, vchecks);
+          return `<tr><td>${esc(cl.name)}</td><td>${cl.interval_days ? 'alle ' + cl.interval_days + ' Tage' : 'ohne Frist'}</td><td>${st.last ? fmtDate(st.last) : ''}</td><td>${esc(clText(st))}</td></tr>`;
+        })
+        .join('')}</tbody></table>` : ''}
+      <h2>Beladung (${items.length} Gegenstände in ${areas.length} Fächern)</h2>
+      <table><thead><tr><th>Fach</th><th>Gegenstand</th><th>Soll</th><th>Check</th><th>Hinweis</th></tr></thead><tbody>${rowsItems}</tbody></table>
+      <h2>Offene Mängel (${mine.length})</h2>
+      ${mine.length ? `<table><thead><tr><th>Gegenstand</th><th>Fach</th><th>Status</th><th>Stand</th><th>Gefunden</th></tr></thead><tbody>${mine
+        .map((m) => `<tr class="${m.status}"><td>${esc(m.item_name)}</td><td>${esc(m.area_name || '')}</td><td>${STATUS[m.status].long}</td><td>${m.resolved_status === 'progress' ? 'In Arbeit' : 'Offen'}</td><td>${fmtDateTime(m.check.created_at)}, ${esc(m.check.member_name)}</td></tr>`)
+        .join('')}</tbody></table>` : '<p>Keine offenen Mängel.</p>'}
+      <h2>Letzte Checks</h2>
+      <table><thead><tr><th>Datum</th><th>Prüfer</th><th>Check</th><th>Mängel</th></tr></thead><tbody>${lastChecks
+        .map((c) => `<tr><td>${fmtDateTime(c.created_at)}</td><td>${esc(c.member_name)}</td><td>${esc(c.checklist_name || 'voll')}</td><td>${pc[c.id] || 0}</td></tr>`)
+        .join('')}</tbody></table>`);
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+const STATUS_DE = { ok: 'Vorhanden', missing: 'Fehlt', defect: 'Defekt' };
+const STAND_DE = { open: 'Offen', progress: 'In Arbeit', fixed: 'Behoben' };
+async function excelExport(vid) {
+  busy(true);
+  try {
+    const [d, X] = await Promise.all([api.exportAll(), import('./xlsx.js')]);
+    const vehicles = d.vehicles.filter((v) => !vid || v.id === vid);
+    const vname = Object.fromEntries(d.vehicles.map((v) => [v.id, v.name]));
+    const vids = new Set(vehicles.map((v) => v.id));
+    const lname = Object.fromEntries(d.checklists.map((l) => [l.id, l.name]));
+    const areas = d.areas.filter((a) => vids.has(a.vehicle_id));
+    const aById = Object.fromEntries(areas.map((a) => [a.id, a]));
+    const items = d.items.filter((i) => aById[i.area_id]);
+    const checks = d.checks.filter((c) => vids.has(c.vehicle_id)).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    const cById = Object.fromEntries(checks.map((c) => [c.id, c]));
+    const results = d.check_results.filter((r) => cById[r.check_id]).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    const bad = {};
+    const tot = {};
+    for (const r of results) {
+      tot[r.check_id] = (tot[r.check_id] || 0) + 1;
+      if (r.status !== 'ok') bad[r.check_id] = (bad[r.check_id] || 0) + 1;
+    }
+    const cn = (c) => c.checklist_name || (c.checklist_id && lname[c.checklist_id]) || 'voller Check';
+    const resRow = (r) => {
+      const c = cById[r.check_id];
+      return [fmtDateTime(c.created_at), vname[c.vehicle_id] || '', cn(c), c.member_name, r.area_name || '', r.item_name, STATUS_DE[r.status], r.note || '', r.status === 'ok' ? '' : STAND_DE[r.resolved_status] || '', r.resolved_at ? fmtDateTime(r.resolved_at) : '', r.resolved_by || '', r.resolve_note || ''];
+    };
+    const head = ['Datum', 'Fahrzeug', 'Check', 'Prüfer', 'Fach', 'Gegenstand', 'Status', 'Notiz', 'Mängelstand', 'Erledigt am', 'Erledigt von', 'Kommentar'];
+    const bytes = X.buildXlsx([
+      { name: 'Fahrzeuge', widths: [24, 24, 20, 16, 14, 40], rows: [['Name', 'Typ', 'Standort', 'Nächste Prüfung', 'Intervall Monate', 'Hinweise'], ...vehicles.map((v) => [v.name, v.type || '', v.location || '', v.next_inspection ? fmtDate(v.next_inspection) : '', v.inspection_months || '', v.notes || ''])] },
+      { name: 'Checklisten', widths: [24, 28, 16], rows: [['Fahrzeug', 'Name', 'Intervall Tage'], ...d.checklists.filter((l) => vids.has(l.vehicle_id)).map((l) => [vname[l.vehicle_id] || '', l.name, l.interval_days || ''])] },
+      { name: 'Gegenstände', widths: [24, 26, 34, 8, 24, 36], rows: [['Fahrzeug', 'Fach', 'Gegenstand', 'Soll', 'Check', 'Hinweis'], ...items.map((i) => [vname[aById[i.area_id].vehicle_id] || '', aById[i.area_id].name, i.name, i.qty, i.checklist_id ? lname[i.checklist_id] || '' : 'jeder Check', i.note || ''])] },
+      { name: 'Checks', widths: [16, 24, 24, 20, 34, 12, 10], rows: [['Datum', 'Fahrzeug', 'Check', 'Prüfer', 'Bemerkung', 'Positionen', 'Mängel'], ...checks.map((c) => [fmtDateTime(c.created_at), vname[c.vehicle_id] || '', cn(c), c.member_name, c.note || '', tot[c.id] || 0, bad[c.id] || 0])] },
+      { name: 'Mängel', widths: [16, 24, 24, 20, 26, 34, 12, 30, 14, 16, 16, 30], rows: [head, ...results.filter((r) => r.status !== 'ok').map(resRow)] },
+      { name: 'Alle Ergebnisse', widths: [16, 24, 24, 20, 26, 34, 12, 30, 14, 16, 16, 30], rows: [head, ...results.map(resRow)] },
+    ]);
+    const nm = vid ? (vname[vid] || 'fahrzeug').replace(/[^\w\-äöüÄÖÜß]+/g, '_') : 'alle';
+    X.downloadBytes(bytes, `fahrzeug-check-${nm}-${new Date().toISOString().slice(0, 10)}.xlsx`, X.XLSX_MIME);
+    toast('Excel Datei wurde erstellt');
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+// ======================================================================
+// Ansicht: Statistik (nur Admin)
+// ======================================================================
+async function viewStats() {
+  if (S.role !== 'admin') return viewHome();
+  const days = S.statDays || 90;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const [vs, { checks, results }, lists, allChecks, defects] = await Promise.all([api.listVehicles(), api.statsData(since), api.allChecklists(), api.lastChecks(), api.openDefects()]);
+  S.openCount = defects.length;
+  const vname = Object.fromEntries(vs.map((v) => [v.id, v.name]));
+  const badIds = new Set(results.filter((r) => r.status !== 'ok').map((r) => r.check_id));
+  const nBad = checks.filter((c) => badIds.has(c.id)).length;
+  const pct = checks.length ? Math.round(((checks.length - nBad) / checks.length) * 100) : null;
+
+  // Checks pro Monat
+  const nMonths = Math.min(12, Math.max(3, Math.ceil(days / 30)));
+  const months = [];
+  const now = new Date();
+  for (let i = nMonths - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString('de-DE', { month: 'short' }), n: 0 });
+  }
+  for (const c of checks) {
+    const m = months.find((x) => x.key === localDate(new Date(c.created_at)).slice(0, 7));
+    if (m) m.n++;
+  }
+  const maxM = Math.max(1, ...months.map((m) => m.n));
+
+  // Pro Fahrzeug
+  const perV = vs.map((v) => {
+    const cs = checks.filter((c) => c.vehicle_id === v.id);
+    const b = cs.filter((c) => badIds.has(c.id)).length;
+    const last = allChecks.find((c) => c.vehicle_id === v.id);
+    return { v, n: cs.length, b, last: last ? last.created_at : null };
+  });
+
+  // Häufigste Mängel
+  const freq = {};
+  for (const r of results) {
+    if (r.status === 'ok') continue;
+    const k = `${r.item_name}||${r.area_name || ''}`;
+    (freq[k] ||= { name: r.item_name, area: r.area_name || '', n: 0, vehicle: '' }).n++;
+  }
+  const top = Object.values(freq).sort((a, b) => b.n - a.n).slice(0, 8);
+  const maxT = Math.max(1, ...top.map((t) => t.n));
+
+  // Prüfer
+  const who = {};
+  for (const c of checks) who[c.member_name] = (who[c.member_name] || 0) + 1;
+  const whoList = Object.entries(who).sort((a, b) => b[1] - a[1]);
+  const maxW = Math.max(1, ...whoList.map((w) => w[1]));
+
+  // Fälligkeiten
+  const due = [];
+  for (const v of vs) {
+    const vch = checksOfVehicle(v.id, allChecks);
+    for (const cl of lists.filter((l) => l.vehicle_id === v.id)) {
+      const st = clStatus(cl, vch);
+      const lv = clLevel(st, cl);
+      if (lv !== 'green') due.push({ lv, text: `${v.name}: ${cl.name} ${clText(st)}`, order: st.never ? -999 : st.days });
+    }
+    const hu = daysUntil(v.next_inspection);
+    if (hu !== null && hu <= 30) due.push({ lv: hu < 0 ? 'red' : 'yellow', text: `${v.name}: Prüfung ${fmtDate(v.next_inspection)} (${hu < 0 ? 'überfällig seit ' + -hu + ' Tagen' : 'in ' + hu + ' Tagen'})`, order: hu });
+  }
+  due.sort((a, b) => a.order - b.order);
+  const bar = (n, max) => `<span class="bar"><span style="width:${Math.round((n / max) * 100)}%"></span></span>`;
+
+  return {
+    active: 'stats',
+    html: `<h2>Statistik</h2>
+      <div class="stack wrap">${[30, 90, 365].map((d) => `<button class="btn small ${d === days ? 'primary' : ''}" data-days="${d}">${d === 365 ? '1 Jahr' : d + ' Tage'}</button>`).join('')}</div>
+      <div class="tiles">
+        <div class="tile green"><b>${checks.length}</b><span>Checks</span></div>
+        <div class="tile ${nBad ? 'yellow' : 'green'}"><b>${nBad}</b><span>mit Mängeln</span></div>
+        <div class="tile ${defects.length ? 'red' : 'green'}"><b>${defects.length}</b><span>offen jetzt</span></div>
+      </div>
+      ${pct !== null ? `<p class="muted">${pct} Prozent der Checks ohne Mangel im gewählten Zeitraum.</p>` : '<p class="muted">Im gewählten Zeitraum gibt es keine Checks.</p>'}
+      <div class="card pad"><h3>Checks pro Monat</h3><div class="mchart">${months.map((m) => `<div class="mcol"><span class="mval">${m.n}</span><span class="mbar" style="height:${Math.round((m.n / maxM) * 100)}px"></span><span class="mlab">${esc(m.label)}</span></div>`).join('')}</div></div>
+      ${due.length ? `<div class="card pad"><h3>Fristen</h3>${due.map((d) => `<div class="clrow"><span class="lamp ${d.lv}"></span><span class="grow">${esc(d.text)}</span></div>`).join('')}</div>` : ''}
+      <div class="card pad"><h3>Je Fahrzeug</h3><table class="tbl"><thead><tr><th>Fahrzeug</th><th>Checks</th><th>Mängel</th><th>Zuletzt</th></tr></thead><tbody>${perV.map((p) => `<tr><td>${esc(p.v.name)}</td><td>${p.n}</td><td>${p.b}</td><td>${p.last ? fmtDate(p.last) : 'nie'}</td></tr>`).join('')}</tbody></table></div>
+      <div class="card pad"><h3>Häufigste Mängel</h3>${top.length ? top.map((t) => `<div class="hrow"><span class="grow">${esc(t.name)}<div class="muted">${esc(t.area)}</div></span>${bar(t.n, maxT)}<b>${t.n}</b></div>`).join('') : '<p class="muted">Keine Mängel im Zeitraum.</p>'}</div>
+      <div class="card pad"><h3>Wer prüft</h3>${whoList.length ? whoList.map(([n, c]) => `<div class="hrow"><span class="grow">${esc(n)}</span>${bar(c, maxW)}<b>${c}</b></div>`).join('') : '<p class="muted">Noch niemand.</p>'}</div>
+      <button class="btn block" id="stats-xlsx">Alles als Excel herunterladen</button>`,
+    bind() {
+      document.querySelectorAll('[data-days]').forEach((b) => {
+        b.onclick = () => {
+          S.statDays = Number(b.dataset.days);
+          route();
+        };
+      });
+      document.getElementById('stats-xlsx').onclick = () => excelExport(null);
+    },
+  };
+}
+
+// ======================================================================
 // Ansicht: Verlauf
 // ======================================================================
 async function viewHistory() {
-  const checks = await api.listChecks(50);
-  const probs = await api.problemResults(checks.map((c) => c.id));
+  let checks = [], probs = [], noNet = false;
+  try {
+    checks = await api.listChecks(50);
+    probs = await api.problemResults(checks.map((c) => c.id));
+  } catch (e) {
+    if (!isNetErr(e)) throw e;
+    noNet = true;
+  }
   const count = {};
   for (const p of probs) count[p.check_id] = (count[p.check_id] || 0) + 1;
   const admin = S.role === 'admin';
+  const pcards = pendingList()
+    .map(
+      (p) => `<div class="card pad check pendcard"><div class="ctop"><strong>${esc(p.vehicle_name || '')}</strong><span class="badge part">Wartet</span></div>
+        <div class="muted">${fmtDateTime(p.created_at)}, ${esc(p.member_name)}${p.checklist_name ? ' · ' + esc(p.checklist_name) : ''}</div>
+        <div class="muted">${p.results.length} Positionen${p.error ? ', Fehler: ' + esc(p.error) : ', noch nicht gesendet'}</div>
+        <div class="stack"><button class="btn small danger" data-pdel="${p.id}">Verwerfen</button></div></div>`
+    )
+    .join('');
 
   const cards = checks
     .map((c) => {
@@ -1206,7 +1757,7 @@ async function viewHistory() {
       return `<div class="card pad check" data-id="${c.id}">
         <div class="ctop"><strong>${esc(c.vehicles ? c.vehicles.name : '')}</strong>
           <span class="badge ${n ? 'bad' : 'ok'}">${n ? n + ' Mängel' : 'alles ok'}</span></div>
-        <div class="muted">${fmtDateTime(c.created_at)}, ${esc(c.member_name)}</div>
+        <div class="muted">${fmtDateTime(c.created_at)}, ${esc(c.member_name)}${c.checklist_name ? ' · ' + esc(c.checklist_name) : ''}</div>
         ${c.note ? `<div>${esc(c.note)}</div>` : ''}
         <div class="stack"><button class="btn small" data-details="${c.id}">Details</button><button class="btn small" data-print="${c.id}">Als PDF</button>${admin ? `<button class="btn small danger" data-del="${c.id}">Löschen</button>` : ''}</div>
         <div class="details" id="d-${c.id}"></div>
@@ -1216,8 +1767,18 @@ async function viewHistory() {
 
   return {
     active: 'history',
-    html: `<h2>Verlauf</h2>${cards || '<p class="muted">Noch keine Checks.</p>'}`,
+    html: `<h2>Verlauf</h2>${noNet ? '<p class="muted">Kein Netz. Der bisherige Verlauf wird geladen, sobald wieder Netz da ist.</p>' : ''}${pcards}${cards || (pcards || noNet ? '' : '<p class="muted">Noch keine Checks.</p>')}
+      ${admin && checks.length ? '<button class="btn block" id="hist-xlsx">Alles als Excel herunterladen</button>' : ''}`,
     bind() {
+      const hx = document.getElementById('hist-xlsx');
+      if (hx) hx.onclick = () => excelExport(null);
+      document.querySelectorAll('[data-pdel]').forEach((b) => {
+        b.onclick = async () => {
+          if (!confirm('Diesen wartenden Check verwerfen? Er wurde noch nicht gesendet und geht verloren.')) return;
+          await pendingRemove(b.dataset.pdel);
+          route();
+        };
+      });
       document.querySelectorAll('[data-details]').forEach((b) => {
         b.onclick = async () => {
           const id = b.dataset.details;
@@ -1326,8 +1887,8 @@ async function viewSettings() {
         admin
           ? `<form id="f-set" class="card pad">
           <h3>Einheit</h3>
-          ${field('Name der Einheit', 'org', { value: st.org_name })}
-          ${field('Einheitscode für Prüfer (mind. 6 Zeichen)', 'code', { value: st.team_code, required: true, nomic: true })}
+          ${field('Name der Einheit', 'org', { value: st.org_name, attrs: 'readonly data-lpignore="true" data-1p-ignore onfocus="this.removeAttribute(\'readonly\')"' })}
+          ${field('Teamcode für Teammitglieder (mind. 6 Zeichen)', 'code', { value: st.team_code, required: true, nomic: true, attrs: 'readonly data-lpignore="true" data-1p-ignore onfocus="this.removeAttribute(\'readonly\')"' })}
           <button class="btn primary block" type="submit">Speichern</button>
         </form>
         <div class="card pad">
@@ -1338,6 +1899,7 @@ async function viewSettings() {
         <div class="card pad">
           <h3>Datensicherung</h3>
           <div class="muted">Lädt alle Fahrzeuge, Fächer, Gegenstände und Checks als Datei herunter. Fotos sind nicht enthalten.</div>
+          <button class="btn block" id="export-xlsx">Alles als Excel herunterladen</button>
           <button class="btn block" id="export">Daten herunterladen (JSON)</button>
         </div>
         <div class="card pad">
@@ -1354,6 +1916,8 @@ async function viewSettings() {
         location.hash = '#/';
         route();
       };
+      const xx = document.getElementById('export-xlsx');
+      if (xx) xx.onclick = () => excelExport(null);
       const ex = document.getElementById('export');
       if (ex)
         ex.onclick = async () => {
@@ -1432,8 +1996,10 @@ export async function route() {
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
     busy(true);
     if (parts[0] === 'v' && parts[1] && parts[2] === 'a' && parts[3]) view = await viewArea(parts[1], parts[3]);
+    else if (parts[0] === 'v' && parts[1] && parts[2] === 'lists') view = await viewLists(parts[1]);
     else if (parts[0] === 'v' && parts[1]) view = await viewVehicle(parts[1]);
     else if (parts[0] === 'defects') view = await viewDefects();
+    else if (parts[0] === 'stats') view = await viewStats();
     else if (parts[0] === 'history') view = await viewHistory();
     else if (parts[0] === 'settings') view = await viewSettings();
     else view = await viewHome();
@@ -1469,6 +2035,7 @@ async function init() {
   }
   window.addEventListener('hashchange', route);
   route();
+  trySync(true);
 }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
