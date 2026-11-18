@@ -56,3 +56,11 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Reiter "Mängel": alle offenen Mängel nach Fahrzeug, mit Foto, Notiz und Finder. Der Admin setzt "In Arbeit" oder "Behoben" (mit Kommentar) und kann wieder öffnen. Prüfer sehen die Liste nur.
 - Ein Mangel gilt auch als erledigt, wenn der Gegenstand bei einem späteren Check wieder mit OK abgehakt wird. Gezeigt wird immer das neueste Ergebnis je Gegenstand.
 - Für bestehende Datenbanken: `sql/schema.sql` nochmal ausführen (mehrfach möglich) oder nur den Block "Mängelverfolgung".
+
+## Prüffristen, PDF und Datensicherung (neu)
+
+- Fahrzeugdaten: optional "Prüfintervall in Monaten". Mit Intervall erscheint am Fahrzeug der Knopf "Prüfung erledigt". Er setzt die nächste Prüfung auf heute plus Intervall. Vorher kommt eine Rückfrage.
+- Verlauf: Knopf "Als PDF" je Check. Es öffnet sich der Druckdialog des Handys oder Browsers. Dort "Als PDF speichern" wählen. Die Seite enthält Fahrzeug, Datum, Prüfer, alle Positionen mit Status, Notizen und Fotos.
+- Einstellungen: "Daten herunterladen (JSON)" sichert Fahrzeuge, Fächer, Gegenstände und Checks. Fotos sind nicht enthalten, nur ihre Pfade. Das ist eine Sicherung, noch kein Import für die Übergabe.
+- Für bestehende Datenbanken: `sql/schema.sql` nochmal ausführen oder nur den Block "Prüfintervall".
+- Erinnerungen per E Mail gibt es nicht. Die Ampel und die Kachel "Prüfung fällig" zeigen Fristen in der App.

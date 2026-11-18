@@ -85,7 +85,7 @@
     const t = now.toISOString();
     const mk = (area_id, name, qty, x, y, sort) => ({ id: uid(), area_id, name, qty, note: null, x, y, sort, created_at: t });
     return {
-      vehicles: [{ id: vid, name: 'MTW 1 (Beispiel)', type: 'Mannschaftstransporter', location: 'Halle 2', notes: 'Beispieldaten zum Ausprobieren', next_inspection: due, photo_path: 'demo/vehicle.svg', sort: 0, created_at: t }],
+      vehicles: [{ id: vid, name: 'MTW 1 (Beispiel)', type: 'Mannschaftstransporter', location: 'Halle 2', notes: 'Beispieldaten zum Ausprobieren', next_inspection: due, inspection_months: 12, photo_path: 'demo/vehicle.svg', sort: 0, created_at: t }],
       areas: [
         { id: a1, vehicle_id: vid, name: 'Heck links', photo_path: 'demo/area1.svg', x: 0.22, y: 0.5, sort: 0, created_at: t },
         { id: a2, vehicle_id: vid, name: 'Dachbox', photo_path: 'demo/area2.svg', x: 0.55, y: 0.32, sort: 1, created_at: t },

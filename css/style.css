@@ -151,3 +151,14 @@ input[type=checkbox] { width: auto; }
 .nbadge { background: #c62828; color: #fff; border-radius: 10px; padding: 0 6px; font-size: .75rem; margin-left: 3px; }
 .defect { list-style: none; padding: 10px 0; border-top: 1px solid #e3e8ee; } .defect:first-child { border-top: 0; }
 .dtop { display: flex; gap: 6px; margin-bottom: 4px; }
+
+#printarea { display: none; }
+@media print {
+  body.printing > *:not(#printarea) { display: none !important; }
+  body.printing #printarea { display: block; color: #000; background: #fff; font-family: sans-serif; padding: 0; }
+  #printarea table { width: 100%; border-collapse: collapse; font-size: 11pt; }
+  #printarea th, #printarea td { border: 1px solid #999; padding: 4px 6px; text-align: left; vertical-align: top; }
+  #printarea tr.missing td, #printarea tr.defect td { background: #fbe3e3; }
+  #printarea img { max-width: 5cm; max-height: 4cm; margin-top: 4px; }
+  #printarea tr { page-break-inside: avoid; }
+}

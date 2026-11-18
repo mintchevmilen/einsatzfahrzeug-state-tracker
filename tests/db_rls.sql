@@ -105,6 +105,15 @@ select t.run('admin invalid state rejected', 'aaaaaaaa-0000-0000-0000-0000000000
 select t.run('stranger cannot update defect state', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
  $$ with x as (update public.check_results set resolved_status='fixed' returning 1) select count(*)::text from x $$, '0');
 
+select t.run('admin sets inspection interval', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.vehicles set inspection_months=12 returning 1) select count(*)::text from x $$, '1');
+select t.run('interval 0 rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.vehicles set inspection_months=0 returning 1 $$, 'fail');
+select t.run('interval 61 rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.vehicles set inspection_months=61 returning 1 $$, 'fail');
+select t.run('member cannot set interval', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.vehicles set inspection_months=3 returning 1) select count(*)::text from x $$, '0');
+
 -- Admin Verwaltung
 select t.run('admin sees members', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select count(*)::text from public.members $$, '2');
 select t.run('admin remove member', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select public.remove_member('dddddddd-0000-0000-0000-000000000004')::text $$, '');

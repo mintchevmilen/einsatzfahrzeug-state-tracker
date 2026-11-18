@@ -181,6 +181,11 @@ export const setDefectState = async (id, state, by, note) =>
       .update({ resolved_status: state, resolved_at: state === 'open' ? null : new Date().toISOString(), resolved_by: state === 'open' ? null : by, resolve_note: note || null })
       .eq('id', id)
   );
+export async function exportAll() {
+  const t = async (n) => ok(await sb.from(n).select('*'));
+  const [vehicles, areas, items, checks, check_results] = await Promise.all(['vehicles', 'areas', 'items', 'checks', 'check_results'].map(t));
+  return { app: 'einsatzfahrzeug-state-tracker', exported_at: new Date().toISOString(), note: 'Fotos sind nicht enthalten, nur ihre Pfade (photo_path).', vehicles, areas, items, checks, check_results };
+}
 export const resultsForCheck = async (checkId) =>
   ok(await sb.from('check_results').select('*').eq('check_id', checkId).order('area_name').order('item_name'));
 export const deleteCheck = async (id) => ok(await sb.from('checks').delete().eq('id', id));

@@ -1,6 +1,6 @@
 // Service Worker: App Dateien laden zuerst aus dem Netz (damit Updates ankommen)
 // und fallen offline auf den Zwischenspeicher zurück. Supabase Anfragen werden nicht angefasst.
-const CACHE = 'fzcheck-v4';
+const CACHE = 'fzcheck-v5';
 const SHELL = [
   './',
   'index.html',

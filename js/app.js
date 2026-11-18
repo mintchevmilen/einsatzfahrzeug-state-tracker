@@ -490,7 +490,10 @@ async function viewVehicle(id) {
 
   const d = daysUntil(v.next_inspection);
   const dueTxt =
-    d === null ? '' : `<div class="due ${d < 0 ? 'bad' : d <= 30 ? 'warn' : ''}">Nächste Prüfung ${fmtDate(v.next_inspection)}</div>`;
+    d === null && !(S.role === 'admin' && v.inspection_months)
+      ? ''
+      : `<div class="due ${d !== null && d < 0 ? 'bad' : d !== null && d <= 30 ? 'warn' : ''}">${d === null ? 'Keine Prüfung eingetragen' : 'Nächste Prüfung ' + fmtDate(v.next_inspection)}${v.inspection_months ? ` (alle ${v.inspection_months} Monate)` : ''}
+        ${S.role === 'admin' && v.inspection_months ? '<button class="btn small" id="insp-done">Prüfung erledigt</button>' : ''}</div>`;
 
   let checkBar = '';
   if (!edit) {
@@ -633,6 +636,22 @@ async function viewVehicle(id) {
         if (el) el.onclick = fn;
       };
 
+      on('insp-done', async () => {
+        const base = new Date();
+        base.setMonth(base.getMonth() + v.inspection_months);
+        const next = base.toISOString().slice(0, 10);
+        if (!confirm(`Prüfung als erledigt eintragen? Die nächste Prüfung wird der ${fmtDate(next)}.`)) return;
+        busy(true);
+        try {
+          await api.saveVehicle({ id, next_inspection: next });
+        } catch (e) {
+          fail(e);
+        } finally {
+          busy(false);
+        }
+        route();
+      });
+
       on('e-vehicle', async () => {
         const r = await modal({
           title: 'Fahrzeugdaten',
@@ -641,6 +660,7 @@ async function viewVehicle(id) {
             field('Typ', 'type', { value: v.type || '' }) +
             field('Standort', 'location', { value: v.location || '' }) +
             field('Nächste Prüfung', 'next_inspection', { type: 'date', value: v.next_inspection || '' }) +
+            field('Prüfintervall in Monaten (optional)', 'inspection_months', { type: 'number', value: v.inspection_months || '', nomic: true, placeholder: 'z. B. 12' }) +
             field('Hinweise', 'notes', { textarea: true, value: v.notes || '' }),
         });
         if (!r) return;
@@ -652,6 +672,7 @@ async function viewVehicle(id) {
             type: r.type.trim() || null,
             location: r.location.trim() || null,
             next_inspection: r.next_inspection || null,
+            inspection_months: Math.min(60, Math.max(1, parseInt(r.inspection_months, 10) || 0)) || null,
             notes: r.notes.trim() || null,
           });
         } catch (e) {
@@ -1187,7 +1208,7 @@ async function viewHistory() {
           <span class="badge ${n ? 'bad' : 'ok'}">${n ? n + ' Mängel' : 'alles ok'}</span></div>
         <div class="muted">${fmtDateTime(c.created_at)}, ${esc(c.member_name)}</div>
         ${c.note ? `<div>${esc(c.note)}</div>` : ''}
-        <div class="stack"><button class="btn small" data-details="${c.id}">Details</button>${admin ? `<button class="btn small danger" data-del="${c.id}">Löschen</button>` : ''}</div>
+        <div class="stack"><button class="btn small" data-details="${c.id}">Details</button><button class="btn small" data-print="${c.id}">Als PDF</button>${admin ? `<button class="btn small danger" data-del="${c.id}">Löschen</button>` : ''}</div>
         <div class="details" id="d-${c.id}"></div>
       </div>`;
     })
@@ -1225,6 +1246,40 @@ async function viewHistory() {
                 .join('') +
               '</ul>';
             box.dataset.open = '1';
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+        };
+      });
+      document.querySelectorAll('[data-print]').forEach((b) => {
+        b.onclick = async () => {
+          const c = checks.find((x) => x.id === b.dataset.print);
+          busy(true);
+          try {
+            const rs = await api.resultsForCheck(c.id);
+            const urls = await Promise.all(rs.map((r) => api.photoUrl(r.photo_path)));
+            const order = { missing: 0, defect: 1, ok: 2 };
+            const idx = rs.map((_, i) => i).sort((a, b2) => order[rs[a].status] - order[rs[b2].status]);
+            let pa = document.getElementById('printarea');
+            if (!pa) {
+              pa = document.createElement('div');
+              pa.id = 'printarea';
+              document.body.appendChild(pa);
+            }
+            const bad = rs.filter((r) => r.status !== 'ok').length;
+            pa.innerHTML = `<h1>Fahrzeugcheck ${esc(c.vehicles ? c.vehicles.name : '')}</h1>
+              <p>${esc(S.org || '')}<br>Datum: ${fmtDateTime(c.created_at)}<br>Geprüft von: ${esc(c.member_name)}<br>Ergebnis: ${bad ? bad + ' Mängel' : 'alles in Ordnung'} bei ${rs.length} Positionen</p>
+              ${c.note ? `<p>Bemerkung: ${esc(c.note)}</p>` : ''}
+              <table><thead><tr><th>Gegenstand</th><th>Fach</th><th>Status</th><th>Notiz</th></tr></thead><tbody>
+              ${idx.map((i) => `<tr class="${rs[i].status}"><td>${esc(rs[i].item_name)}</td><td>${esc(rs[i].area_name || '')}</td><td>${STATUS[rs[i].status].long}</td><td>${esc(rs[i].note || '')}${urls[i] ? `<br><img src="${esc(urls[i])}" alt="">` : ''}</td></tr>`).join('')}
+              </tbody></table>`;
+            await Promise.all([...pa.querySelectorAll('img')].map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+            document.body.classList.add('printing');
+            const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+            window.addEventListener('afterprint', done);
+            window.print();
           } catch (e) {
             fail(e);
           } finally {
@@ -1281,6 +1336,11 @@ async function viewSettings() {
           <input readonly value="${esc(link)}" onclick="this.select()">
         </div>
         <div class="card pad">
+          <h3>Datensicherung</h3>
+          <div class="muted">Lädt alle Fahrzeuge, Fächer, Gegenstände und Checks als Datei herunter. Fotos sind nicht enthalten.</div>
+          <button class="btn block" id="export">Daten herunterladen (JSON)</button>
+        </div>
+        <div class="card pad">
           <h3>Prüfer (${members.length})</h3>
           ${members.map((m) => `<div class="row"><span class="grow">${esc(m.name)}<div class="muted">seit ${fmtDate(m.created_at)}</div></span><button class="btn small danger" data-rm="${m.user_id}">Entfernen</button></div>`).join('') || '<div class="muted">Noch niemand angemeldet.</div>'}
         </div>`
@@ -1294,6 +1354,27 @@ async function viewSettings() {
         location.hash = '#/';
         route();
       };
+      const ex = document.getElementById('export');
+      if (ex)
+        ex.onclick = async () => {
+          busy(true);
+          try {
+            const data = await api.exportAll();
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'fahrzeug-check-' + new Date().toISOString().slice(0, 10) + '.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+            toast('Datei wurde erstellt');
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+        };
       const f = document.getElementById('f-set');
       if (f)
         f.onsubmit = async (e) => {

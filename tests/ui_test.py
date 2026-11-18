@@ -160,6 +160,32 @@ try:
     page.click('nav.tabs a >> text=Konto'); page.click('#logout')
     page.reload()
 
+    # Intervall, PDF, Export
+    page.click('#t-admin') if page.locator('#t-admin').count() else None
+    page.fill('#f-admin [name=email]', 'admin@demo.de'); page.fill('#f-admin [name=password]', 'demo1234'); page.click('#f-admin button[type=submit]')
+    page.locator('.vcard').first.click()
+    ok('no interval -> no done button', page.locator('#insp-done').count() == 0)
+    page.check('#edit-toggle'); page.click('#e-vehicle'); page.fill('.modal [name=inspection_months]', '6'); page.click('.modal button[type=submit]')
+    page.uncheck('#edit-toggle')
+    expect(page.locator('#insp-done')).to_be_visible(); ok('interval -> done button', True)
+    page.click('#insp-done')
+    expect(page.locator('.due')).to_contain_text('alle 6 Monate'); ok('next inspection shows interval', True)
+    ok('done moved due date away from warning', 'warn' not in page.locator('.due').first.get_attribute('class'))
+    page.click('nav.tabs a >> text=Verlauf')
+    page.evaluate("window.__printed = 0; window.print = () => { window.__printed++; }; 0")
+    page.locator('[data-print]').first.click()
+    expect(page.locator('#printarea table')).to_be_attached(); ok('print area built', 'Fahrzeugcheck' in page.locator('#printarea h1').inner_text())
+    page.wait_for_function('window.__printed >= 1'); ok('print called once ' + str(page.evaluate('window.__printed')), page.evaluate('window.__printed') == 1)
+    ok('print table lists items', page.locator('#printarea tbody tr').count() == 2)
+    page.click('nav.tabs a >> text=Einstellungen')
+    with page.expect_download() as dl: page.click('#export')
+    ok('export file name', dl.value.suggested_filename.startswith('fahrzeug-check-') and dl.value.suggested_filename.endswith('.json'))
+    import json as _j
+    data = _j.load(open(dl.value.path()))
+    ok('export has vehicles and results', len(data['vehicles']) == 1 and len(data['check_results']) >= 2)
+    page.click('#logout')
+    page.reload()
+
     # Beispieldaten
     page.goto(BASE + '?demo=reset')
     page.fill('#f-member [name=code]', 'Test-1234'); page.fill('#f-member [name=name]', 'Ben'); page.click('#f-member button[type=submit]')

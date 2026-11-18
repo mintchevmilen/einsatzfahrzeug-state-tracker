@@ -100,6 +100,14 @@ do $$ begin
       check (resolved_status in ('open','progress','fixed'));
   end if;
 end $$;
+-- Prüfintervall in Monaten (optional)
+alter table public.vehicles add column if not exists inspection_months int;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'vehicles_inspection_months_chk') then
+    alter table public.vehicles add constraint vehicles_inspection_months_chk
+      check (inspection_months is null or inspection_months between 1 and 60);
+  end if;
+end $$;
 create index if not exists check_results_open_idx on public.check_results(resolved_status) where status <> 'ok';
 
 -- ---------------------------------------------------------------
