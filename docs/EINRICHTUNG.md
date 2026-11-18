@@ -35,8 +35,9 @@ Der Code ist das gemeinsame Passwort für Prüfer. Man kann ihn später in der A
 
 ## 4. App mit Supabase verbinden
 
-1. In Supabase "Project Settings", "API" (oder "API Keys").
-2. Kopieren: **Project URL** und **Publishable key** (beginnt mit `sb_publishable_`, älter: "anon public").
+1. In Supabase links unten das Zahnrad "Project Settings". Dort "Data API" (Project URL) und "API Keys" (Publishable key).
+   Die Namen der Menüpunkte ändern sich manchmal. Alternativ oben im Projekt auf "Connect" klicken.
+2. Kopieren: **Project URL** (`https://xxxx.supabase.co`) und **Publishable key** (beginnt mit `sb_publishable_`, älter: "anon public").
 3. In dieser Repository Datei `config.js` eintragen und speichern (commit):
 
 ```js
@@ -46,6 +47,7 @@ window.APP_CONFIG = {
 };
 ```
 
+Es werden **keine** GitHub "Actions", "Secrets" oder "Variables" gebraucht. Die App ist eine feste Web Seite, die Werte stehen direkt in `config.js`.
 **Nie** den "secret" oder "service_role" Key eintragen. Das Repository ist öffentlich.
 Der Publishable Key ist dafür gedacht. Geschützt sind die Daten durch die Rechte aus `schema.sql`.
 

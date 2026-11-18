@@ -142,7 +142,12 @@ try:
         page.click('.back')
     page.click('#finish'); page.click('.modal button[type=submit]')
     expect(page.locator('.check .badge.ok')).to_contain_text('alles ok'); ok('seed full check -> alles ok', True)
-    page.goto(BASE + '?demo=off'); ok('demo off with no config shows setup hint', 'Noch nicht eingerichtet' in page.locator('body').inner_text())
+    page.goto(BASE + '?demo=off')
+    cfg_real = 'supabase.co' in open(os.path.join(REPO, 'config.js')).read()
+    if cfg_real:
+        ok('demo off with real config: no demo banner', page.locator('.demo').count() == 0)
+    else:
+        ok('demo off with no config shows setup hint', 'Noch nicht eingerichtet' in page.locator('body').inner_text())
 
     # Manifest und Icons (Android Installation)
     m = json.loads(subprocess.check_output(['curl', '-s', BASE + 'manifest.webmanifest']))
