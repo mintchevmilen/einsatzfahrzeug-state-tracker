@@ -3,7 +3,7 @@ import { esc, fmtDate, fmtDateTime, daysUntil, relPos, configured, uuid } from '
 import { isNetErr, pendingList, pendingCount, pendingPut, pendingGet, pendingRemove, blobPut, blobGet, blobDel } from './offline.js';
 
 const app = document.getElementById('app');
-const S = { role: null, name: null, org: '', uid: null, edit: false, moving: null, openCount: 0 };
+const S = { role: null, name: null, org: '', uid: null, edit: false, moving: null, openCount: 0, bkCount: 0 };
 
 // ======================================================================
 // Kleine UI Bausteine
@@ -355,6 +355,10 @@ async function trySync(rerender = true) {
 }
 window.addEventListener('online', () => trySync(true));
 document.addEventListener('click', (e) => {
+  if (e.target.closest && e.target.closest('#scan-btn')) {
+    scanQr();
+    return;
+  }
   if (e.target.closest && e.target.closest('#sync-now')) {
     busy(true);
     syncPending()
@@ -391,14 +395,14 @@ function shell(inner, active) {
   ${demo ? '<div class="demo">Testmodus. Die Daten bleiben nur in diesem Browser. <a href="?demo=reset">Zurücksetzen</a> <a href="?demo=empty">Leer starten</a> <a href="?demo=off">Beenden</a></div>' : ''}
   <header class="top">
     <div class="brand">${esc(S.org || 'Fahrzeug Check')}</div>
-    <div class="who">${admin ? 'Admin' : esc(S.name || '')}</div>
+    <div class="who"><button type="button" class="btn small" id="scan-btn">Scannen</button> ${admin ? 'Admin' : esc(S.name || '')}</div>
   </header>
   ${pendingStrip()}
   <main>${inner}</main>
   <nav class="tabs">
     <a href="#/" class="${active === 'home' ? 'on' : ''}">Fahrzeuge</a>
     <a href="#/defects" class="${active === 'defects' ? 'on' : ''}">Mängel${S.openCount ? ` <span class="nbadge">${S.openCount}</span>` : ''}</a>
-    <a href="#/usage" class="${active === 'usage' ? 'on' : ''}">Nutzung</a>
+    <a href="#/usage" class="${active === 'usage' ? 'on' : ''}">Nutzung${S.bkCount ? ` <span class="nbadge">${S.bkCount}</span>` : ''}</a>
     <a href="#/history" class="${active === 'history' ? 'on' : ''}">Verlauf</a>
     ${admin ? `<a href="#/stats" class="${active === 'stats' ? 'on' : ''}">Statistik</a>` : ''}
     <a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${admin ? 'Einstellungen' : 'Konto'}</a>
@@ -1120,6 +1124,9 @@ async function viewArea(vid, aid) {
     .join('');
 
   const doneCount = items.filter((it) => res(it.id).status).length;
+  const toolsBox = admin && !edit
+    ? `<div class="card pad"><h3>Werkzeuge</h3><div class="stack wrap"><button class="btn small" id="a-qr">QR Code drucken</button><button class="btn small" id="a-sheet">Fachblatt (PDF)</button></div></div>`
+    : '';
   const movingBar = S.moving && S.moving.kind === 'item' ? `<div class="banner">Tippe auf das Foto, um die neue Position zu setzen. <button class="btn small" id="cancel-move">Abbrechen</button></div>` : '';
 
   const editPanel = edit
@@ -1144,6 +1151,7 @@ async function viewArea(vid, aid) {
       ${pinBox(url, pins, admin ? 'Noch kein Foto. Nimm ein Foto vom Fach auf.' : 'Kein Foto vorhanden')}
       ${editPanel}
       <ol class="items">${rows || '<p class="muted">Noch keine Gegenstände.</p>'}</ol>
+      ${toolsBox}
       ${!checking && !edit && !draft && items.length ? '<p class="muted">Starte beim Fahrzeug einen Check, um Gegenstände abzuhaken.</p>' : ''}`,
     bind() {
       const tg = document.getElementById('edit-toggle');
@@ -1159,6 +1167,11 @@ async function viewArea(vid, aid) {
           S.moving = null;
           route();
         };
+
+      const aq = document.getElementById('a-qr');
+      if (aq) aq.onclick = () => areaQr(v, area);
+      const as = document.getElementById('a-sheet');
+      if (as) as.onclick = () => areaSheet(v, area, itemsAll, url, lists);
 
       const itemModal = (it, pos) =>
         modal({
@@ -1582,6 +1595,164 @@ async function viewLists(vid) {
 // ======================================================================
 // QR Codes, Fahrzeugblatt, Excel
 // ======================================================================
+// ======================================================================
+// QR Scanner und Fach Werkzeuge
+// ======================================================================
+// Liefert den Hash Pfad (z. B. "#/v/<id>/a/<id>") oder null, wenn der Code nicht zu dieser App gehört.
+export function parseScan(text) {
+  try {
+    const u = new URL(String(text).trim());
+    if (u.origin + u.pathname !== baseUrl()) return null;
+    return /^#\/v\/[0-9a-f-]{8,}(\/a\/[0-9a-f-]{8,})?$/i.test(u.hash) ? u.hash : null;
+  } catch (e) {
+    return null;
+  }
+}
+window.__fz = { parseScan };
+
+async function scanQr() {
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML = `<div class="modal scan"><h3>QR Code scannen</h3>
+    <video id="scan-v" playsinline muted></video>
+    <p class="muted" id="scan-msg">Halte die Kamera auf den QR Code an einem Fahrzeug oder Fach.</p>
+    <div class="mbtns"><button type="button" class="btn ghost" id="scan-x">Schließen</button></div></div>`;
+  document.body.appendChild(ov);
+  const msg = (t) => {
+    const m = ov.querySelector('#scan-msg');
+    if (m) m.textContent = t;
+  };
+  let stream = null;
+  let stopped = false;
+  const close = () => {
+    stopped = true;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    ov.remove();
+  };
+  ov.querySelector('#scan-x').onclick = close;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+  } catch (e) {
+    msg('Kein Zugriff auf die Kamera. Erlaube die Kamera in den Browser Einstellungen und versuche es nochmal.');
+    return;
+  }
+  if (stopped) return stream.getTracks().forEach((t) => t.stop());
+  const video = ov.querySelector('#scan-v');
+  video.srcObject = stream;
+  try {
+    await video.play();
+  } catch (e) {
+    /* weiter */
+  }
+  const det = null; // nur jsQR: auf allen Geräten gleich und getestet
+  const jsqr = (await import('../vendor/jsqr.mjs')).default;
+  const cv = document.createElement('canvas');
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  let lastBad = '';
+  const tick = async () => {
+    if (stopped) return;
+    let text = null;
+    try {
+      if (video.videoWidth) {
+        if (det) {
+          const codes = await det.detect(video);
+          if (codes.length) text = codes[0].rawValue;
+        } else {
+          const w = Math.min(640, video.videoWidth);
+          cv.width = w;
+          cv.height = Math.round((video.videoHeight / video.videoWidth) * w);
+          cx.drawImage(video, 0, 0, cv.width, cv.height);
+          const img = cx.getImageData(0, 0, cv.width, cv.height);
+          const c = jsqr(img.data, cv.width, cv.height);
+          if (c) text = c.data;
+        }
+      }
+    } catch (e) {
+      /* nächster Versuch */
+    }
+    if (text) {
+      const h = parseScan(text);
+      if (h) {
+        close();
+        location.hash = h;
+        route();
+        return;
+      }
+      if (text !== lastBad) {
+        lastBad = text;
+        msg('Dieser Code gehört nicht zu dieser App.');
+      }
+    }
+    setTimeout(tick, 250);
+  };
+  tick();
+}
+
+async function areaQr(v, area) {
+  busy(true);
+  try {
+    const svg = await qrSvg(`${baseUrl()}#/v/${v.id}/a/${area.id}`);
+    await printArea(`<h1>QR Code ${esc(area.name)}</h1><div class="qrgrid"><div class="qrlabel"><div class="qrsvg">${svg}</div><strong>${esc(area.name)}</strong><div>${esc(v.name)}, Fach</div></div></div>`);
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+async function areaSheet(v, area, items, url, lists) {
+  busy(true);
+  try {
+    const qr = await qrSvg(`${baseUrl()}#/v/${v.id}/a/${area.id}`);
+    const lname = Object.fromEntries(lists.map((l) => [l.id, l.name]));
+    await printArea(`<h1>Fachblatt ${esc(area.name)}</h1>
+      <div class="sheethead"><div><p>${esc(S.org || '')}<br>Fahrzeug: ${esc(v.name)}<br>Stand: ${fmtDateTime(new Date().toISOString())}</p></div><div class="qrsvg small">${qr}</div></div>
+      ${url ? `<img class="sheetphoto" src="${esc(url)}" alt="">` : ''}
+      <h2>Beladung (${items.length} Gegenstände)</h2>
+      <table><thead><tr><th>Nr</th><th>Gegenstand</th><th>Soll</th><th>Check</th><th>Hinweis</th></tr></thead><tbody>${items
+        .map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td>${i.qty}</td><td>${esc(i.checklist_id ? lname[i.checklist_id] || '' : 'jeder')}</td><td>${esc(i.note || '')}</td></tr>`)
+        .join('')}</tbody></table>`);
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+// ======================================================================
+// Hinweiszahl für Buchungen (Admin: offene Anfragen, Mitglied: neue Antworten)
+// ======================================================================
+const bkSeen = () => {
+  try {
+    return JSON.parse(localStorage.getItem('bkseen') || '{}');
+  } catch (e) {
+    return {};
+  }
+};
+const bkMarkSeen = (list) => {
+  const m = bkSeen();
+  for (const b of list) m[b.id] = b.status;
+  try {
+    localStorage.setItem('bkseen', JSON.stringify(m));
+  } catch (e) {
+    /* egal */
+  }
+};
+// Nach Abmelden und neuem Beitritt ändert sich die Konto Nummer, darum zählt auch der Name.
+const bkMine = (b) => b.user_id === S.uid || (S.role === 'member' && b.member_name === S.name);
+const bkNews = (bookings) => {
+  if (S.role === 'admin') return bookings.filter((b) => b.status === 'requested');
+  const seen = bkSeen();
+  return bookings.filter((b) => bkMine(b) && (b.status === 'confirmed' || b.status === 'rejected') && seen[b.id] !== b.status);
+};
+async function refreshBkCount() {
+  try {
+    S.bkCount = bkNews(await api.listBookings(new Date().toISOString())).length;
+  } catch (e) {
+    S.bkCount = 0;
+  }
+}
+
 async function vehicleQr(v, areas) {
   const r = await modal({
     title: 'QR Codes drucken',
@@ -1819,19 +1990,22 @@ async function viewUsage() {
     )
     .join('');
 
-  const live = bookings.filter((b) => b.status === 'requested' || b.status === 'confirmed');
+  const live = bookings.filter((b) => b.status === 'requested' || b.status === 'confirmed' || (!admin && b.status === 'rejected' && bkMine(b)));
+  const news = tab === 'cal' ? bkNews(bookings) : [];
+  const newIds = new Set(news.map((b) => b.id));
+  if (news.length) bkMarkSeen(news);
   const byDay = {};
   for (const b of live) (byDay[localDate(new Date(b.starts_at))] ||= []).push(b);
   const days = Object.keys(byDay).sort();
   const bkCard = (b) => {
     const own = b.user_id === S.uid;
-    return `<div class="card pad brow ${b.status}" data-bid="${b.id}">
-      <div class="ctop"><strong>${esc(b.vehicles ? b.vehicles.name : '')}</strong><span class="badge ${b.status === 'confirmed' ? 'ok' : 'part'}">${BK_STATUS[b.status]}</span></div>
+    return `<div class="card pad brow ${b.status}${newIds.has(b.id) ? ' isnew' : ''}" data-bid="${b.id}">
+      <div class="ctop"><strong>${esc(b.vehicles ? b.vehicles.name : '')}</strong><span class="badge ${b.status === 'confirmed' ? 'ok' : b.status === 'rejected' ? 'bad' : 'part'}">${newIds.has(b.id) ? 'Neu: ' : ''}${BK_STATUS[b.status]}</span></div>
       <div>${new Date(b.starts_at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} bis ${fmtDateTime(b.ends_at)}</div>
       <div class="muted">${esc(b.member_name)}, ${esc(api.purposeLabel(b.purpose))}${b.note ? ' · ' + esc(b.note) : ''}</div>
       <div class="stack">
         ${admin && b.status === 'requested' ? `<button class="btn small primary" data-bk="confirmed" data-id="${b.id}">Bestätigen</button><button class="btn small danger" data-bk="rejected" data-id="${b.id}">Ablehnen</button>` : ''}
-        ${(own || admin) && b.status !== 'rejected' ? `<button class="btn small" data-bk="cancelled" data-id="${b.id}">Stornieren</button>` : ''}
+        ${(own || admin) && b.status !== 'rejected' && b.status !== 'cancelled' ? `<button class="btn small" data-bk="cancelled" data-id="${b.id}">Stornieren</button>` : ''}
       </div></div>`;
   };
   const pending = live.filter((b) => b.status === 'requested');
@@ -2250,6 +2424,8 @@ export async function route() {
     else if (parts[0] === 'history') view = await viewHistory();
     else if (parts[0] === 'settings') view = await viewSettings();
     else view = await viewHome();
+    if (my !== routing) return;
+    await refreshBkCount();
     if (my !== routing) return;
     app.innerHTML = shell(view.html, view.active);
     bindMics(app);

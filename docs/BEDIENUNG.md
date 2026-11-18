@@ -89,3 +89,9 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Tab "Nutzung": Protokoll mit Person, Zweck, Zeit und Dauer, dazu Excel Export für den Admin.
 - Kalender: Mitglieder fragen eine Buchung an, der Admin bestätigt oder lehnt ab. Der Admin kann auch direkt buchen. Überschneidungen mit bestätigten Buchungen werden abgewiesen. Stornieren kann die Person selbst oder der Admin.
 - Grenzen: Ein und Auschecken und Buchen brauchen Netz. Es gibt noch keine Erinnerung und keine Wochenansicht, der Kalender ist eine Liste nach Tagen.
+
+## Scanner, Fach QR, Hinweiszahl (neu)
+- Oben rechts gibt es den Knopf "Scannen". Er öffnet die Kamera und liest QR Codes von Fahrzeugen und Fächern. Der Code öffnet direkt die richtige Seite. Fremde QR Codes werden abgelehnt. Die Kamera muss im Browser erlaubt sein.
+- Im Fach (als Admin, Bearbeiten aus) gibt es "QR Code drucken" und "Fachblatt (PDF)" mit Foto und Beladung.
+- Der Tab "Nutzung" zeigt eine Zahl: beim Admin die offenen Buchungsanfragen, beim Mitglied neue Antworten (bestätigt oder abgelehnt). Die Zahl verschwindet, sobald man den Kalender angesehen hat.
+- Hinweis: Meldet sich ein Mitglied ab und wieder neu an, bekommt es technisch ein neues Konto. Die Antworten findet es über seinen Namen. Stornieren kann es nur Buchungen aus seinem aktuellen Konto.

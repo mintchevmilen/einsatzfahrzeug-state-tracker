@@ -70,8 +70,10 @@ try:
     box = page.locator('#pinimg').bounding_box()
     page.mouse.click(box['x'] + box['width'] * 0.7, box['y'] + box['height'] * 0.3)
     page.fill('.modal [name=name]', 'Verbandkasten'); page.fill('.modal [name=qty]', '2'); page.click('.modal button[type=submit]')
-    expect(page.locator('.pin')).to_have_count(1)
+    expect(page.locator('.pin')).to_have_count(1); page.wait_for_timeout(300)
+    box = page.locator('#pinimg').bounding_box()
     page.mouse.click(box['x'] + box['width'] * 0.3, box['y'] + box['height'] * 0.8)
+    expect(page.locator('.modal [name=name]')).to_be_visible()
     page.fill('.modal [name=name]', 'Warndreieck'); page.click('.modal button[type=submit]')
     expect(page.locator('.pin')).to_have_count(2); expect(page.locator('.item')).to_have_count(2)
     ok('two items with pins', True)
@@ -128,7 +130,7 @@ try:
     ok('member check saved with name', 'Anna' in page.locator('.check').first.inner_text())
     ok('member sees no delete button', page.locator('[data-del]').count() == 0)
     page.click('nav.tabs a >> text=Konto'); ok('member account has no settings form', page.locator('#f-set').count() == 0)
-    page.reload(); expect(page.locator('.who')).to_have_text('Anna'); ok('member session persists', True)
+    page.reload(); expect(page.locator('.who')).to_contain_text('Anna'); ok('member session persists', True)
 
     # Mängelverfolgung
     page.click('nav.tabs a >> text=Mängel')
