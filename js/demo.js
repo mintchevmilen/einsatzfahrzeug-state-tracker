@@ -252,6 +252,8 @@
         return { error: { message: 'Anmeldung falsch. Im Testmodus: ' + cfg.DEMO_ADMIN.email + ' / ' + cfg.DEMO_ADMIN.password } };
       },
       async signOut() { setSess(null); return { error: null }; },
+      async getUser() { const s = sess(); return { data: { user: s && s.role === 'admin' ? { id: s.id, email: cfg.DEMO_ADMIN.email } : null }, error: null }; },
+      async updateUser({ password }) { if (!password || password.length < 6) return { data: null, error: { message: 'Password should be at least 6 characters' } }; cfg.DEMO_ADMIN.password = password; return { data: {}, error: null }; },
     },
     async rpc(name, a) {
       if (netdown()) return netErr();

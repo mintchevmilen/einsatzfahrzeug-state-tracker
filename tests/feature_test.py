@@ -173,6 +173,17 @@ try:
     ok('heute markiert', '(heute)' in page.locator('h3.today').inner_text())
     page.click('[data-wk="1"]'); ok('nächste Woche ohne heute', page.locator('h3.today').count() == 0)
     page.click('[data-wk="0"]'); expect(page.locator('h3.today')).to_have_count(1)
+    # Passwort ändern
+    page.goto(BASE + '?demo#/settings'); expect(page.locator('#chpw')).to_be_visible()
+    def chpw(cur, a, b):
+        page.click('#chpw'); page.fill('.modal [name=cur]', cur); page.fill('.modal [name=pw1]', a); page.fill('.modal [name=pw2]', b); page.click('.modal button[type=submit]')
+    chpw('demo1234', 'kurz', 'kurz'); expect(page.locator('.toast.bad').last).to_contain_text('mindestens 8'); ok('zu kurzes Passwort abgelehnt', True)
+    chpw('demo1234', 'NeuesPasswort1', 'Anders12345'); expect(page.locator('.toast.bad').last).to_contain_text('nicht gleich'); ok('ungleiche Eingabe abgelehnt', True)
+    chpw('falsch', 'NeuesPasswort1', 'NeuesPasswort1'); expect(page.locator('.toast.bad').last).to_contain_text('aktuelle Passwort stimmt nicht'); ok('falsches altes Passwort abgelehnt', True)
+    chpw('demo1234', 'NeuesPasswort1', 'NeuesPasswort1'); expect(page.locator('.toast').last).to_contain_text('Passwort geändert'); ok('Passwort geändert', True)
+    page.click('#logout'); page.click('#t-admin'); page.fill('#f-admin [name=email]', 'admin@demo.de'); page.fill('#f-admin [name=password]', 'demo1234'); page.click('#f-admin button[type=submit]')
+    expect(page.locator('.toast.bad').last).to_be_visible(); ok('altes Passwort geht nicht mehr', page.locator('#f-admin').count() == 1)
+    page.fill('#f-admin [name=password]', 'NeuesPasswort1'); page.click('#f-admin button[type=submit]'); expect(page.locator('h2')).to_have_text('Fahrzeuge'); ok('Anmeldung mit neuem Passwort', True)
     # Mitgliederliste
     page.goto(BASE + '?demo#/settings'); expect(page.locator('main')).to_contain_text('Mitglieder (')
     ok('Mitgliederliste mit Aktivität', 'zuletzt aktiv' in page.locator('main').inner_text() or 'noch nichts eingetragen' in page.locator('main').inner_text())

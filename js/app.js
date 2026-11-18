@@ -2448,6 +2448,7 @@ async function viewSettings() {
     html: `<h2>${admin ? 'Einstellungen' : 'Konto'}</h2>
       <div class="card pad">
         <div>Angemeldet als <strong>${admin ? 'Admin' : esc(S.name || '')}</strong></div>
+        ${admin ? '<button class="btn block" id="chpw">Passwort ändern</button>' : ''}
         <button class="btn block" id="logout">Abmelden</button>
       </div>
       ${
@@ -2477,6 +2478,30 @@ async function viewSettings() {
           : ''
       }`,
     bind() {
+      const chpw = document.getElementById('chpw');
+      if (chpw)
+        chpw.onclick = async () => {
+          const r = await modal({
+            title: 'Passwort ändern',
+            body:
+              field('Aktuelles Passwort', 'cur', { type: 'password', required: true, nomic: true, autocomplete: 'current-password' }) +
+              field('Neues Passwort (mind. 8 Zeichen)', 'pw1', { type: 'password', required: true, nomic: true, autocomplete: 'new-password' }) +
+              field('Neues Passwort nochmal', 'pw2', { type: 'password', required: true, nomic: true, autocomplete: 'new-password' }),
+            ok: 'Ändern',
+          });
+          if (!r) return;
+          if (r.pw1.length < 8) return toast('Das neue Passwort braucht mindestens 8 Zeichen.', true);
+          if (r.pw1 !== r.pw2) return toast('Die beiden neuen Passwörter sind nicht gleich.', true);
+          busy(true);
+          try {
+            await api.changePassword(r.cur, r.pw1);
+            toast('Passwort geändert');
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+        };
       document.getElementById('logout').onclick = async () => {
         await api.logout();
         S.role = S.name = S.uid = null;

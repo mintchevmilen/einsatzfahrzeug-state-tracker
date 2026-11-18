@@ -101,3 +101,6 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - Kilometer und Tankstand: Beim Nutzen und Zurückgeben optional eintragen. Der letzte Kilometerstand wird vorgeschlagen. Ein Endstand unter dem Startstand wird abgelehnt. Im Protokoll und im Excel stehen gefahrene Kilometer und Tank.
 - Kalender: Umschalten zwischen Liste und Woche. In der Woche stehen sieben Tage mit den Buchungen, "Vorige", "Diese Woche" und "Nächste".
 - Einstellungen, Mitglieder: Name, Beitritt, letzte Aktivität und Zahl der Checks und Nutzungen. "Entfernen" löscht den Eintrag. Wer den Teamcode kennt, kann wieder beitreten. Für einen dauerhaften Ausschluss den Teamcode ändern.
+
+## Passwort ändern (neu)
+Als Admin unter Einstellungen, "Passwort ändern". Du gibst das aktuelle und zweimal das neue Passwort ein (mindestens 8 Zeichen). Mitglieder haben kein Passwort, sie nutzen den Teamcode.

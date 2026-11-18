@@ -352,3 +352,14 @@ export const listBookings = (sinceIso) =>
     ok(await sb.from('bookings').select('*, vehicles(name)').gte('ends_at', sinceIso).order('starts_at')));
 export const requestBooking = async (row) => ok(await sb.from('bookings').insert(row).select().single());
 export const setBooking = async (id, patch) => ok(await sb.from('bookings').update(patch).eq('id', id));
+
+// Passwort ändern (nur Admin mit E-Mail Konto). Prüft zuerst das aktuelle Passwort.
+export async function changePassword(current, next) {
+  const { data } = await sb.auth.getUser();
+  const email = data && data.user && data.user.email;
+  if (!email) throw new Error('Nur für Admin Konten mit E-Mail.');
+  const chk = await sb.auth.signInWithPassword({ email, password: current });
+  if (chk.error) throw new Error('Das aktuelle Passwort stimmt nicht.');
+  const r = await sb.auth.updateUser({ password: next });
+  if (r.error) throw new Error(/same/i.test(r.error.message) ? 'Das neue Passwort muss anders sein als das alte.' : r.error.message);
+}
