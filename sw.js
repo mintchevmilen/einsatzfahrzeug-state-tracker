@@ -1,6 +1,6 @@
 // Service Worker: App Dateien laden zuerst aus dem Netz (damit Updates ankommen)
 // und fallen offline auf den Zwischenspeicher zurück. Supabase Anfragen werden nicht angefasst.
-const CACHE = 'fzcheck-v9';
+const CACHE = 'fzcheck-v10';
 const SHELL = [
   './',
   'index.html',
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' }) // immer beim Server nachfragen, sonst bleibt bis zu 10 Minuten die alte Version
       .then((res) => {
         if (res && res.ok) {
           const copy = res.clone();
