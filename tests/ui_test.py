@@ -111,7 +111,7 @@ try:
     ok('details show photo', page.locator('.rthumb').count() == 1)
     page.click('nav.tabs a >> text=Einstellungen')
     expect(page.locator('#f-set [name=code]')).to_have_value('Test-1234')
-    page.fill('#f-set [name=code]', 'abc'); page.click('#f-set button[type=submit]')
+    page.click('#f-set [name=code]'); page.fill('#f-set [name=code]', 'abc'); page.click('#f-set button[type=submit]')
     expect(page.locator('.toast.bad').last).to_contain_text('mindestens 6'); ok('short code rejected', True)
     page.click('#logout'); expect(page.locator('#f-member')).to_be_visible(); ok('admin logout', True)
 

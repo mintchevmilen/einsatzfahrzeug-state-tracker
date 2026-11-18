@@ -140,6 +140,58 @@ select t.run('admin deletes checklist', 'aaaaaaaa-0000-0000-0000-000000000001','
 select t.run('items kept, link cleared after checklist delete', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
  $$ select (select count(*) from public.items where checklist_id is not null)::text || '/' || (select count(*) from public.items)::text $$, '0/' || (select count(*) from public.items)::text);
 
+-- Nutzung
+select t.run('member checks in', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (insert into public.usages(vehicle_id,member_name,purpose) values ('11111111-1111-1111-1111-111111111111','Anna','einsatz') returning 1) select count(*)::text from x $$, '1');
+select t.run('second open usage same vehicle rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ insert into public.usages(vehicle_id,member_name,purpose) values ('11111111-1111-1111-1111-111111111111','Admin','uebung') returning 1 $$, 'fail');
+select t.run('bad purpose rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.usages(vehicle_id,member_name,purpose) values ('11111111-1111-1111-1111-111111111111','Anna','urlaub') returning 1 $$, 'fail');
+select t.run('stranger cannot read usages', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
+ $$ select count(*)::text from public.usages $$, '0');
+select t.run('stranger cannot check in', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
+ $$ insert into public.usages(vehicle_id,member_name,purpose) values ('11111111-1111-1111-1111-111111111111','X','fahrt') returning 1 $$, 'fail');
+select t.run('member sees usage', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ select count(*)::text from public.usages $$, '1');
+select t.run('member cannot fake other user', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.usages(vehicle_id,member_name,purpose,user_id) values ('11111111-1111-1111-1111-111111111111','Z','fahrt','cccccccc-0000-0000-0000-000000000003') returning 1 $$, 'fail');
+select t.run('other member cannot end foreign usage', 'cccccccc-0000-0000-0000-000000000003','authenticated',
+ $$ with x as (update public.usages set ended_at=now() returning 1) select count(*)::text from x $$, '0');
+select t.run('member ends own usage', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.usages set ended_at=now(), ended_by='Anna' returning 1) select count(*)::text from x $$, '1');
+select t.run('admin checks in after end', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (insert into public.usages(vehicle_id,member_name,purpose) values ('11111111-1111-1111-1111-111111111111','Admin','wartung') returning 1) select count(*)::text from x $$, '1');
+select t.run('admin ends usage', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.usages set ended_at=now() where ended_at is null returning 1) select count(*)::text from x $$, '1');
+select t.run('member cannot delete usage', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (delete from public.usages returning 1) select count(*)::text from x $$, '0');
+
+-- Buchungen
+select t.run('member requests booking', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at) values ('11111111-1111-1111-1111-111111111111','Anna','uebung','2030-01-10 10:00+00','2030-01-10 12:00+00') returning 1) select count(*)::text from x $$, '1');
+select t.run('member cannot self confirm on insert', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at,status) values ('11111111-1111-1111-1111-111111111111','Anna','uebung','2030-02-10 10:00+00','2030-02-10 12:00+00','confirmed') returning 1 $$, 'fail');
+select t.run('end before start rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at) values ('11111111-1111-1111-1111-111111111111','Anna','uebung','2030-03-10 12:00+00','2030-03-10 10:00+00') returning 1 $$, 'fail');
+select t.run('member cannot confirm', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.bookings set status='confirmed' returning 1) select count(*)::text from x $$, 'fail');
+select t.run('admin confirms', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (update public.bookings set status='confirmed', decided_by='Admin' returning 1) select count(*)::text from x $$, '1');
+select t.run('request in confirmed time rejected', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at) values ('11111111-1111-1111-1111-111111111111','Anna','fahrt','2030-01-10 11:00+00','2030-01-10 13:00+00') returning 1 $$, 'fail');
+select t.run('request right after confirmed ok', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at) values ('11111111-1111-1111-1111-111111111111','Anna','fahrt','2030-01-10 12:00+00','2030-01-10 14:00+00') returning 1) select count(*)::text from x $$, '1');
+select t.run('admin books directly confirmed', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ with x as (insert into public.bookings(vehicle_id,member_name,purpose,starts_at,ends_at,status) values ('11111111-1111-1111-1111-111111111111','Admin','wartung','2030-01-10 13:00+00','2030-01-10 15:00+00','confirmed') returning 1) select count(*)::text from x $$, '1');
+select t.run('confirming overlapping request rejected', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated',
+ $$ update public.bookings set status='confirmed' where purpose='fahrt' returning 1 $$, 'fail');
+select t.run('stranger cannot read bookings', 'bbbbbbbb-0000-0000-0000-000000000002','authenticated',
+ $$ select count(*)::text from public.bookings $$, '0');
+select t.run('member cancels own', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (update public.bookings set status='cancelled' where purpose='fahrt' returning 1) select count(*)::text from x $$, '1');
+select t.run('member cannot delete booking', 'dddddddd-0000-0000-0000-000000000004','authenticated',
+ $$ with x as (delete from public.bookings returning 1) select count(*)::text from x $$, '0');
+
 -- Admin Verwaltung
 select t.run('admin sees members', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select count(*)::text from public.members $$, '2');
 select t.run('admin remove member', 'aaaaaaaa-0000-0000-0000-000000000001','authenticated', $$ select public.remove_member('dddddddd-0000-0000-0000-000000000004')::text $$, '');

@@ -100,12 +100,16 @@
       checks: [],
       check_results: [],
       checklists: [],
+      usages: [],
+      bookings: [],
       members: [],
     };
   }
 
-  let db = param === 'empty' ? { vehicles: [], areas: [], items: [], checks: [], check_results: [], checklists: [], members: [] } : load(DB, null) || seed();
+  let db = param === 'empty' ? { vehicles: [], areas: [], items: [], checks: [], check_results: [], checklists: [], usages: [], bookings: [], members: [] } : load(DB, null) || seed();
   db.checklists = db.checklists || [];
+  db.usages = db.usages || [];
+  db.bookings = db.bookings || [];
   const netdown = () => typeof navigator !== 'undefined' && navigator.onLine === false;
   const netErr = () => ({ data: null, error: { message: 'TypeError: Failed to fetch' } });
   const save = () => localStorage.setItem(DB, JSON.stringify(db));
@@ -138,6 +142,7 @@
       select(c) { st.cols = c || '*'; if (st.op !== 'select') st.ret = true; return b; },
       insert(p) { st.op = 'insert'; st.payload = p; return b; },
       upsert(p, o) { st.op = 'insert'; st.payload = p; st.ignoreDup = true; return b; },
+      is(c, v) { st.filters.push((r) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return b; },
       gte(c, v) { st.filters.push((r) => r[c] >= v); return b; },
       range(a, z) { st.range = [a, z]; return b; },
       update(p) { st.op = 'update'; st.payload = p; return b; },
@@ -148,8 +153,9 @@
       order(c, o) { st.orders.push([c, !(o && o.ascending === false)]); return b; },
       limit(n) { st.lim = n; return b; },
       single() { st.single = true; return b; },
-      then(res, rej) { return Promise.resolve(run()).then(res, rej); },
+      then(res, rej) { let r; try { r = run(); } catch (e) { r = err(e.message); } return Promise.resolve(r).then(res, rej); },
     };
+    const overlapsConfirmed = (n) => ['requested', 'confirmed'].includes(n.status) && db.bookings.some((b) => b.id !== n.id && b.vehicle_id === n.vehicle_id && b.status === 'confirmed' && b.starts_at < n.ends_at && b.ends_at > n.starts_at);
     function run() {
       if (netdown()) return netErr();
       const s = sess();
@@ -160,6 +166,12 @@
       const write = st.op !== 'select';
       const adminOnly = ['vehicles', 'areas', 'items', 'checklists'].includes(table) || (table === 'checks' && st.op === 'delete') || (table === 'check_results' && st.op !== 'insert');
       if (write && adminOnly && m.role !== 'admin') return err('new row violates row-level security policy');
+      if (table === 'usages' && st.op === 'delete' && m.role !== 'admin') return { data: null, error: null };
+      if (table === 'bookings' && m.role !== 'admin') {
+        if (st.op === 'delete') return { data: null, error: null };
+        if (st.op === 'insert' && [].concat(st.payload).some((p) => p.status && p.status !== 'requested')) return err('new row violates row-level security policy');
+        if (st.op === 'update' && st.payload.status !== 'cancelled') return err('new row violates row-level security policy');
+      }
       let out;
       if (st.op === 'insert') {
         const arr = Array.isArray(st.payload) ? st.payload : [st.payload];
@@ -170,13 +182,26 @@
           if (table === 'vehicles') { r.photo_path = r.photo_path ?? null; }
           if (table === 'checklists') { r.interval_days = r.interval_days ?? null; r.sort = r.sort ?? 0; }
           if (table === 'check_results') { r.resolved_status = r.resolved_status ?? 'open'; r.resolved_at = null; r.resolved_by = null; r.resolve_note = null; }
+          if (table === 'usages') {
+            r.user_id = s.id; r.started_at = r.started_at || new Date().toISOString(); r.ended_at = null; r.ended_by = null; r.note = r.note ?? null;
+            if (rows.some((x) => x.vehicle_id === r.vehicle_id && !x.ended_at)) throw new Error('duplicate key value violates unique constraint "usages_one_open"');
+          }
+          if (table === 'bookings') {
+            r.user_id = s.id; r.status = r.status || 'requested'; r.note = r.note ?? null; r.decided_by = null;
+            if (!(r.ends_at > r.starts_at)) throw new Error('ends_at muss nach starts_at liegen');
+            if (overlapsConfirmed(r)) throw new Error('Das Fahrzeug ist in dieser Zeit schon gebucht');
+          }
           if (table === 'checks') { r.user_id = s.id; r.member_name = m.role === 'member' ? m.name : p.member_name || 'Admin'; }
           rows.push(r);
           return r;
         });
       } else {
         const sel = rows.filter((r) => st.filters.every((f) => f(r)));
-        if (st.op === 'update') sel.forEach((r) => Object.assign(r, st.payload));
+        if (st.op === 'update') {
+          if (m.role !== 'admin' && (table === 'usages' || table === 'bookings')) { for (let i = sel.length - 1; i >= 0; i--) if (sel[i].user_id !== s.id) sel.splice(i, 1); }
+          if (table === 'bookings') for (const r of sel) { const n = { ...r, ...st.payload }; if (overlapsConfirmed(n)) throw new Error('Das Fahrzeug ist in dieser Zeit schon gebucht'); }
+          sel.forEach((r) => Object.assign(r, st.payload));
+        }
         if (st.op === 'delete') {
           sel.forEach((r) => rows.splice(rows.indexOf(r), 1));
           if (table === 'checks') db.check_results = db.check_results.filter((x) => !sel.some((c) => c.id === x.check_id));
@@ -201,6 +226,7 @@
       for (const [c, asc] of st.orders.slice().reverse()) out.sort((a, b2) => (a[c] > b2[c] ? 1 : a[c] < b2[c] ? -1 : 0) * (asc ? 1 : -1));
       if (st.lim) out = out.slice(0, st.lim);
       if (st.range) out = out.slice(st.range[0], st.range[1] + 1);
+      if ((table === 'usages' || table === 'bookings') && /vehicles\(/.test(st.cols)) out = out.map((c) => ({ ...c, vehicles: { name: (db.vehicles.find((v) => v.id === c.vehicle_id) || {}).name } }));
       if (table === 'checks' && /vehicles\(/.test(st.cols)) out = out.map((c) => ({ ...c, vehicles: { name: (db.vehicles.find((v) => v.id === c.vehicle_id) || {}).name } }));
       out = JSON.parse(JSON.stringify(out));
       if (st.single) return out.length === 1 ? { data: out[0], error: null } : err('Keine Zeile');

@@ -326,3 +326,29 @@ export async function compressImage(file, max = 1600, quality = 0.8) {
     URL.revokeObjectURL(url);
   }
 }
+
+// ---------- Fahrzeugnutzung und Buchungen ----------
+export const PURPOSES = [
+  { value: 'einsatz', label: 'Einsatz' },
+  { value: 'uebung', label: 'Übung' },
+  { value: 'wartung', label: 'Wartung' },
+  { value: 'reinigung', label: 'Reinigung' },
+  { value: 'fahrt', label: 'Fahrt' },
+  { value: 'sonstiges', label: 'Sonstiges' },
+];
+export const purposeLabel = (v) => (PURPOSES.find((p) => p.value === v) || { label: v }).label;
+export const listUsages = (limit = 200, vehicleId = null) =>
+  cached('usages:' + limit + ':' + (vehicleId || ''), async () => {
+    let q = sb.from('usages').select('*, vehicles(name)').order('started_at', { ascending: false }).limit(limit);
+    if (vehicleId) q = q.eq('vehicle_id', vehicleId);
+    return ok(await q);
+  });
+export const openUsages = () =>
+  cached('usages:open', async () => ok(await sb.from('usages').select('*').is('ended_at', null)));
+export const checkIn = async (row) => ok(await sb.from('usages').insert(row).select().single());
+export const checkOut = async (id, by) => ok(await sb.from('usages').update({ ended_at: new Date().toISOString(), ended_by: by }).eq('id', id));
+export const listBookings = (sinceIso) =>
+  cached('bookings:' + sinceIso.slice(0, 10), async () =>
+    ok(await sb.from('bookings').select('*, vehicles(name)').gte('ends_at', sinceIso).order('starts_at')));
+export const requestBooking = async (row) => ok(await sb.from('bookings').insert(row).select().single());
+export const setBooking = async (id, patch) => ok(await sb.from('bookings').update(patch).eq('id', id));

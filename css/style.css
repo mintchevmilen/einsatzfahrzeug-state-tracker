@@ -181,3 +181,10 @@ input[type=checkbox] { width: auto; }
 .sheetphoto { max-width: 100%; max-height: 8cm; display: block; margin: 8px 0; }
 @media print { #printarea h2 { font-size: 13pt; margin: 14px 0 4px; } }
 @media (max-width: 460px) { nav.tabs a { font-size: .8rem; padding: 14px 2px; } }
+
+/* Nutzung und Buchungen */
+.usebox.busy { border-left: 4px solid #e6a100; }
+.seg { display: flex; gap: 8px; margin: 8px 0 12px; }
+.urow.live { border-left: 4px solid #e6a100; }
+.brow.confirmed { border-left: 4px solid #2e8b57; }
+.brow.requested { border-left: 4px solid #e6a100; }

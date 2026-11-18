@@ -81,3 +81,11 @@ Check später abschließen, sobald wieder Netz da ist. Nicht geprüfte Gegenstä
 - QR Codes: im Fahrzeug unter Werkzeuge, für das Fahrzeug und optional jedes Fach. Der Druckdialog bietet "Als PDF speichern".
 - Fahrzeugblatt: ein PDF mit Fahrzeug, Fächern und Gegenständen.
 - Excel: je Fahrzeug im Fahrzeug, alles zusammen in den Einstellungen, Verlauf und Mängel haben eigene Knöpfe.
+
+## Fahrzeugnutzung und Buchungen (neu)
+- Im Fahrzeug gibt es die Box "Nutzung". Wer das Fahrzeug nimmt, tippt "Fahrzeug nutzen" und wählt den Zweck: Einsatz, Übung, Wartung, Reinigung, Fahrt oder Sonstiges. Der QR Code am Fahrzeug führt direkt dorthin.
+- "Zurückgeben" beendet die Zeit. Danach kann man direkt einen Check starten: eine Checkliste oder den vollen Check. Der Admin legt die Checklisten fest, zum Beispiel Kurz Check und Lang Check.
+- Ein Fahrzeug kann nur von einer Person gleichzeitig genutzt werden. Zurückgeben kann nur die Person selbst oder der Admin.
+- Tab "Nutzung": Protokoll mit Person, Zweck, Zeit und Dauer, dazu Excel Export für den Admin.
+- Kalender: Mitglieder fragen eine Buchung an, der Admin bestätigt oder lehnt ab. Der Admin kann auch direkt buchen. Überschneidungen mit bestätigten Buchungen werden abgewiesen. Stornieren kann die Person selbst oder der Admin.
+- Grenzen: Ein und Auschecken und Buchen brauchen Netz. Es gibt noch keine Erinnerung und keine Wochenansicht, der Kalender ist eine Liste nach Tagen.

@@ -398,6 +398,7 @@ function shell(inner, active) {
   <nav class="tabs">
     <a href="#/" class="${active === 'home' ? 'on' : ''}">Fahrzeuge</a>
     <a href="#/defects" class="${active === 'defects' ? 'on' : ''}">Mängel${S.openCount ? ` <span class="nbadge">${S.openCount}</span>` : ''}</a>
+    <a href="#/usage" class="${active === 'usage' ? 'on' : ''}">Nutzung</a>
     <a href="#/history" class="${active === 'history' ? 'on' : ''}">Verlauf</a>
     ${admin ? `<a href="#/stats" class="${active === 'stats' ? 'on' : ''}">Statistik</a>` : ''}
     <a href="#/settings" class="${active === 'settings' ? 'on' : ''}">${admin ? 'Einstellungen' : 'Konto'}</a>
@@ -606,7 +607,7 @@ async function viewHome() {
 // Ansicht: Fahrzeug
 // ======================================================================
 async function viewVehicle(id) {
-  const [v, areas, lists, allChecks] = await Promise.all([api.getVehicle(id), api.listAreas(id), api.listChecklists(id), api.lastChecks()]);
+  const [v, areas, lists, allChecks, openU, bookings] = await Promise.all([api.getVehicle(id), api.listAreas(id), api.listChecklists(id), api.lastChecks(), api.openUsages(), api.listBookings(new Date().toISOString())]);
   const itemsAll = await api.listItemsForAreas(areas.map((a) => a.id));
   const url = await api.photoUrl(v.photo_path);
   const admin = S.role === 'admin';
@@ -672,6 +673,19 @@ async function viewVehicle(id) {
         })
         .join('')}</div>`
     : '';
+  const curUse = openU.find((u) => u.vehicle_id === id);
+  const nextBk = bookings.filter((b) => b.vehicle_id === id && b.status === 'confirmed').sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1))[0];
+  const mine = curUse && (admin || curUse.user_id === S.uid);
+  const useBox = edit
+    ? ''
+    : `<div class="card pad usebox ${curUse ? 'busy' : ''}"><h3>Nutzung</h3>${
+        curUse
+          ? `<div><strong>Im Gebrauch</strong>: ${esc(curUse.member_name)}, ${esc(api.purposeLabel(curUse.purpose))}, seit ${fmtDateTime(curUse.started_at)}</div>
+             ${mine ? '<div class="stack"><button class="btn primary" id="u-out">Zurückgeben</button></div>' : '<div class="muted">Nur die Person selbst oder der Admin kann zurückgeben.</div>'}`
+          : '<div class="muted">Frei. Wer das Fahrzeug nimmt, trägt sich hier ein.</div><div class="stack"><button class="btn primary" id="u-in">Fahrzeug nutzen</button></div>'
+      }
+      ${nextBk ? `<div class="muted">Nächste Buchung: ${fmtDateTime(nextBk.starts_at)} bis ${fmtDateTime(nextBk.ends_at)}, ${esc(nextBk.member_name)}</div>` : ''}
+      <div class="stack"><button class="btn small" id="u-book">Buchen</button><a class="btn small" href="#/usage">Protokoll und Kalender</a></div></div>`;
   const toolsBox = admin && !edit
     ? `<div class="card pad"><h3>Werkzeuge</h3><div class="stack wrap">
         <button class="btn small" id="t-qr">QR Codes drucken</button>
@@ -705,6 +719,7 @@ async function viewVehicle(id) {
       ${pinBox(url, pins, admin ? 'Noch kein Foto. Nimm ein Foto vom Fahrzeug auf.' : 'Kein Foto vorhanden')}
       ${editPanel}
       ${checkBar}
+      ${useBox}
       ${listBox}
       <h3>Fächer</h3>
       <div class="rows">${areaRows || '<p class="muted">Noch keine Fächer.</p>'}</div>
@@ -903,6 +918,61 @@ async function viewVehicle(id) {
         } finally {
           busy(false);
         }
+      });
+
+      on('u-in', async () => {
+        const r = await modal({
+          title: 'Fahrzeug nutzen',
+          body: field('Wofür?', 'purpose', { options: api.PURPOSES, value: 'einsatz' }) + field('Hinweis (optional)', 'note', { placeholder: 'z. B. Ziel oder Grund' }),
+          ok: 'Eintragen',
+        });
+        if (!r) return;
+        busy(true);
+        try {
+          await api.checkIn({ vehicle_id: id, member_name: S.name || 'Admin', purpose: r.purpose, note: r.note.trim() || null });
+          toast('Eingetragen. Gute Fahrt.');
+        } catch (e) {
+          if (e && /usages_one_open|duplicate/.test(e.message || '')) toast('Das Fahrzeug ist gerade schon in Benutzung.', true);
+          else fail(e);
+        } finally {
+          busy(false);
+        }
+        route();
+      });
+      on('u-out', async () => {
+        const r = await modal({
+          title: 'Fahrzeug zurückgeben',
+          body: '<p class="muted">Danach kannst du direkt einen Check machen.</p>',
+          ok: '',
+          actions: [
+            { key: 'only', label: 'Nur zurückgeben' },
+            ...lists.map((cl) => ({ key: 'cl:' + cl.id, label: `Zurückgeben und Check: ${cl.name}` })),
+            { key: 'all', label: 'Zurückgeben und voller Check' },
+          ],
+        });
+        if (!r) return;
+        busy(true);
+        try {
+          await api.checkOut(curUse.id, S.name || 'Admin');
+        } catch (e) {
+          fail(e);
+          busy(false);
+          return;
+        }
+        busy(false);
+        if (r.__action !== 'only' && itemsAll.length) {
+          let pick = { checklistId: null, checklistName: null };
+          if (r.__action.startsWith('cl:')) {
+            const cl = lists.find((x) => x.id === r.__action.slice(3));
+            pick = { checklistId: cl.id, checklistName: cl.name };
+          }
+          setDraft(id, { started: new Date().toISOString(), results: {}, ...pick });
+        }
+        toast('Zurückgegeben');
+        route();
+      });
+      on('u-book', async () => {
+        if (await bookingForm(id)) route();
       });
 
       on('start', async () => {
@@ -1635,6 +1705,182 @@ async function excelExport(vid) {
 // ======================================================================
 // Ansicht: Statistik (nur Admin)
 // ======================================================================
+// ======================================================================
+// Nutzung (Ein und Auschecken) und Buchungen
+// ======================================================================
+const pad2 = (n) => String(n).padStart(2, '0');
+const toLocalInput = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const fmtDur = (a, b) => {
+  const min = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000));
+  return min < 60 ? `${min} Min` : `${Math.floor(min / 60)} Std ${pad2(min % 60)} Min`;
+};
+const BK_STATUS = { requested: 'Angefragt', confirmed: 'Bestätigt', rejected: 'Abgelehnt', cancelled: 'Storniert' };
+
+// Öffnet das Buchungsformular. Gibt true zurück, wenn gespeichert wurde.
+async function bookingForm(vid) {
+  const [vehicles, bookings] = await Promise.all([api.listVehicles(), api.listBookings(new Date().toISOString())]);
+  const admin = S.role === 'admin';
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+  const end = new Date(start.getTime() + 2 * 3600 * 1000);
+  const r = await modal({
+    title: admin ? 'Fahrzeug buchen' : 'Buchung anfragen',
+    body:
+      (vid ? '' : field('Fahrzeug', 'vehicle', { options: vehicles.map((v) => ({ value: v.id, label: v.name })) })) +
+      field('Wofür?', 'purpose', { options: api.PURPOSES, value: 'uebung' }) +
+      field('Von', 'starts', { type: 'datetime-local', value: toLocalInput(start), required: true, nomic: true }) +
+      field('Bis', 'ends', { type: 'datetime-local', value: toLocalInput(end), required: true, nomic: true }) +
+      field('Hinweis (optional)', 'note', {}) +
+      (admin ? '' : '<p class="muted">Der Admin muss die Buchung bestätigen.</p>'),
+    ok: admin ? 'Buchen' : 'Anfragen',
+  });
+  if (!r) return false;
+  const v = vid || r.vehicle;
+  const a = new Date(r.starts);
+  const b = new Date(r.ends);
+  if (isNaN(a) || isNaN(b) || b <= a) {
+    toast('Das Ende muss nach dem Beginn liegen.', true);
+    return false;
+  }
+  const clash = bookings.find((x) => x.vehicle_id === v && x.status === 'confirmed' && new Date(x.starts_at) < b && new Date(x.ends_at) > a);
+  if (clash) {
+    toast(`Schon gebucht: ${fmtDateTime(clash.starts_at)} bis ${fmtDateTime(clash.ends_at)}`, true);
+    return false;
+  }
+  busy(true);
+  try {
+    await api.requestBooking({
+      vehicle_id: v,
+      member_name: S.name || 'Admin',
+      purpose: r.purpose,
+      note: r.note.trim() || null,
+      starts_at: a.toISOString(),
+      ends_at: b.toISOString(),
+      status: admin ? 'confirmed' : 'requested',
+      ...(admin ? { decided_by: S.name || 'Admin' } : {}),
+    });
+    toast(admin ? 'Gebucht' : 'Angefragt. Der Admin bestätigt noch.');
+    return true;
+  } catch (e) {
+    fail(e);
+    return false;
+  } finally {
+    busy(false);
+  }
+}
+
+async function usageExcel(usages, bookings) {
+  busy(true);
+  try {
+    const X = await import('./xlsx.js');
+    const bytes = X.buildXlsx([
+      {
+        name: 'Nutzung',
+        widths: [24, 20, 14, 18, 18, 12, 30],
+        rows: [
+          ['Fahrzeug', 'Person', 'Zweck', 'Von', 'Bis', 'Dauer', 'Hinweis'],
+          ...usages.map((u) => [u.vehicles ? u.vehicles.name : '', u.member_name, api.purposeLabel(u.purpose), fmtDateTime(u.started_at), u.ended_at ? fmtDateTime(u.ended_at) : 'läuft', u.ended_at ? fmtDur(u.started_at, u.ended_at) : '', u.note || '']),
+        ],
+      },
+      {
+        name: 'Buchungen',
+        widths: [24, 20, 14, 18, 18, 14, 30],
+        rows: [
+          ['Fahrzeug', 'Person', 'Zweck', 'Von', 'Bis', 'Status', 'Hinweis'],
+          ...bookings.map((b) => [b.vehicles ? b.vehicles.name : '', b.member_name, api.purposeLabel(b.purpose), fmtDateTime(b.starts_at), fmtDateTime(b.ends_at), BK_STATUS[b.status] || b.status, b.note || '']),
+        ],
+      },
+    ]);
+    X.downloadBytes(bytes, `fahrzeug-nutzung-${new Date().toISOString().slice(0, 10)}.xlsx`, X.XLSX_MIME);
+    toast('Excel Datei wurde erstellt');
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(false);
+  }
+}
+
+async function viewUsage() {
+  const admin = S.role === 'admin';
+  const tab = S.useTab || 'log';
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const [usages, bookings] = await Promise.all([api.listUsages(200), api.listBookings(startOfToday.toISOString())]);
+  const open = usages.filter((u) => !u.ended_at);
+
+  const logRows = usages
+    .map(
+      (u) => `<div class="card pad urow ${u.ended_at ? '' : 'live'}">
+        <div class="ctop"><strong>${esc(u.vehicles ? u.vehicles.name : '')}</strong><span class="badge ${u.ended_at ? '' : 'part'}">${u.ended_at ? esc(fmtDur(u.started_at, u.ended_at)) : 'läuft'}</span></div>
+        <div>${esc(u.member_name)}, ${esc(api.purposeLabel(u.purpose))}</div>
+        <div class="muted">${fmtDateTime(u.started_at)}${u.ended_at ? ' bis ' + fmtDateTime(u.ended_at) : ''}${u.note ? ' · ' + esc(u.note) : ''}</div>
+      </div>`
+    )
+    .join('');
+
+  const live = bookings.filter((b) => b.status === 'requested' || b.status === 'confirmed');
+  const byDay = {};
+  for (const b of live) (byDay[localDate(new Date(b.starts_at))] ||= []).push(b);
+  const days = Object.keys(byDay).sort();
+  const bkCard = (b) => {
+    const own = b.user_id === S.uid;
+    return `<div class="card pad brow ${b.status}" data-bid="${b.id}">
+      <div class="ctop"><strong>${esc(b.vehicles ? b.vehicles.name : '')}</strong><span class="badge ${b.status === 'confirmed' ? 'ok' : 'part'}">${BK_STATUS[b.status]}</span></div>
+      <div>${new Date(b.starts_at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} bis ${fmtDateTime(b.ends_at)}</div>
+      <div class="muted">${esc(b.member_name)}, ${esc(api.purposeLabel(b.purpose))}${b.note ? ' · ' + esc(b.note) : ''}</div>
+      <div class="stack">
+        ${admin && b.status === 'requested' ? `<button class="btn small primary" data-bk="confirmed" data-id="${b.id}">Bestätigen</button><button class="btn small danger" data-bk="rejected" data-id="${b.id}">Ablehnen</button>` : ''}
+        ${(own || admin) && b.status !== 'rejected' ? `<button class="btn small" data-bk="cancelled" data-id="${b.id}">Stornieren</button>` : ''}
+      </div></div>`;
+  };
+  const pending = live.filter((b) => b.status === 'requested');
+  const calHtml = days
+    .map((d) => `<h3>${new Date(d + 'T12:00:00').toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' })}</h3>${byDay[d].sort((a, b) => (a.starts_at < b.starts_at ? -1 : 1)).map(bkCard).join('')}`)
+    .join('');
+
+  return {
+    active: 'usage',
+    html: `<h2>Nutzung</h2>
+      <div class="seg"><button class="btn small ${tab === 'log' ? 'primary' : ''}" data-tab="log">Protokoll</button><button class="btn small ${tab === 'cal' ? 'primary' : ''}" data-tab="cal">Kalender${pending.length && admin ? ` (${pending.length} offen)` : ''}</button></div>
+      ${
+        tab === 'log'
+          ? `${open.length ? `<p class="muted">${open.length} Fahrzeug${open.length === 1 ? '' : 'e'} im Gebrauch.</p>` : '<p class="muted">Gerade ist kein Fahrzeug im Gebrauch.</p>'}
+             ${logRows || '<p class="muted">Noch keine Nutzung eingetragen. Eintragen geht im Fahrzeug unter "Nutzung".</p>'}
+             ${admin ? '<button class="btn block" id="u-xlsx">Nutzung und Buchungen als Excel</button>' : ''}`
+          : `<div class="stack"><button class="btn primary" id="bk-add">${admin ? '+ Buchung' : '+ Buchung anfragen'}</button></div>
+             ${calHtml || '<p class="muted">Keine Buchungen in der Zukunft.</p>'}`
+      }`,
+    bind() {
+      document.querySelectorAll('[data-tab]').forEach((b) => {
+        b.onclick = () => {
+          S.useTab = b.dataset.tab;
+          route();
+        };
+      });
+      const add = document.getElementById('bk-add');
+      if (add) add.onclick = async () => { if (await bookingForm(null)) route(); };
+      const x = document.getElementById('u-xlsx');
+      if (x) x.onclick = () => usageExcel(usages, bookings);
+      document.querySelectorAll('[data-bk]').forEach((b) => {
+        b.onclick = async () => {
+          const st = b.dataset.bk;
+          if (st === 'cancelled' && !confirm('Buchung stornieren?')) return;
+          busy(true);
+          try {
+            await api.setBooking(b.dataset.id, { status: st, ...(admin && st !== 'cancelled' ? { decided_by: S.name || 'Admin' } : {}) });
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+          route();
+        };
+      });
+    },
+  };
+}
+
 async function viewStats() {
   if (S.role !== 'admin') return viewHome();
   const days = S.statDays || 90;
@@ -1996,6 +2242,7 @@ export async function route() {
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
     busy(true);
     if (parts[0] === 'v' && parts[1] && parts[2] === 'a' && parts[3]) view = await viewArea(parts[1], parts[3]);
+    else if (parts[0] === 'usage') view = await viewUsage();
     else if (parts[0] === 'v' && parts[1] && parts[2] === 'lists') view = await viewLists(parts[1]);
     else if (parts[0] === 'v' && parts[1]) view = await viewVehicle(parts[1]);
     else if (parts[0] === 'defects') view = await viewDefects();

@@ -354,3 +354,81 @@ create policy photos_member_insert on storage.objects for insert
 -- Einheitscode setzen:
 --   update public.settings set team_code = 'MINDESTENS-6-ZEICHEN' where id = 1;
 -- ---------------------------------------------------------------
+
+-- ======================================================================
+-- Fahrzeugnutzung (Ein und Auschecken) und Buchungen
+-- ======================================================================
+create table if not exists public.usages (
+  id uuid primary key default gen_random_uuid(),
+  vehicle_id uuid not null references public.vehicles(id) on delete cascade,
+  user_id uuid default auth.uid(),
+  member_name text not null,
+  purpose text not null check (purpose in ('einsatz','uebung','wartung','reinigung','fahrt','sonstiges')),
+  note text,
+  started_at timestamptz not null default now(),
+  ended_at timestamptz,
+  ended_by text,
+  created_at timestamptz not null default now(),
+  check (ended_at is null or ended_at >= started_at)
+);
+create index if not exists usages_vehicle_idx on public.usages(vehicle_id, started_at desc);
+-- pro Fahrzeug nur eine offene Nutzung
+create unique index if not exists usages_one_open on public.usages(vehicle_id) where ended_at is null;
+alter table public.usages enable row level security;
+drop policy if exists usages_select on public.usages;
+create policy usages_select on public.usages for select using (public.can_read());
+drop policy if exists usages_insert on public.usages;
+create policy usages_insert on public.usages for insert with check (public.can_read() and (user_id = auth.uid() or public.is_admin()));
+drop policy if exists usages_update on public.usages;
+create policy usages_update on public.usages for update
+  using (public.is_admin() or (public.can_read() and user_id = auth.uid()))
+  with check (public.is_admin() or (public.can_read() and user_id = auth.uid()));
+drop policy if exists usages_delete on public.usages;
+create policy usages_delete on public.usages for delete using (public.is_admin());
+
+create table if not exists public.bookings (
+  id uuid primary key default gen_random_uuid(),
+  vehicle_id uuid not null references public.vehicles(id) on delete cascade,
+  user_id uuid default auth.uid(),
+  member_name text not null,
+  purpose text not null check (purpose in ('einsatz','uebung','wartung','reinigung','fahrt','sonstiges')),
+  note text,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  status text not null default 'requested' check (status in ('requested','confirmed','rejected','cancelled')),
+  decided_by text,
+  created_at timestamptz not null default now(),
+  check (ends_at > starts_at)
+);
+create index if not exists bookings_vehicle_idx on public.bookings(vehicle_id, starts_at);
+
+-- Eine bestätigte Buchung darf sich nicht mit einer anderen bestätigten überschneiden.
+-- Eine neue Anfrage auf eine schon bestätigte Zeit wird abgelehnt.
+create or replace function public.bookings_no_overlap() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status in ('requested','confirmed') and exists (
+    select 1 from public.bookings b
+    where b.vehicle_id = new.vehicle_id and b.id <> new.id and b.status = 'confirmed'
+      and b.starts_at < new.ends_at and b.ends_at > new.starts_at
+  ) then
+    raise exception 'Das Fahrzeug ist in dieser Zeit schon gebucht' using errcode = '23P01';
+  end if;
+  return new;
+end $$;
+drop trigger if exists bookings_no_overlap_trg on public.bookings;
+create trigger bookings_no_overlap_trg before insert or update on public.bookings
+  for each row execute function public.bookings_no_overlap();
+
+alter table public.bookings enable row level security;
+drop policy if exists bookings_select on public.bookings;
+create policy bookings_select on public.bookings for select using (public.can_read());
+drop policy if exists bookings_insert on public.bookings;
+create policy bookings_insert on public.bookings for insert
+  with check (public.can_read() and ((user_id = auth.uid() and status = 'requested') or public.is_admin()));
+drop policy if exists bookings_update on public.bookings;
+create policy bookings_update on public.bookings for update
+  using (public.is_admin() or (public.can_read() and user_id = auth.uid()))
+  with check (public.is_admin() or (public.can_read() and user_id = auth.uid() and status = 'cancelled'));
+drop policy if exists bookings_delete on public.bookings;
+create policy bookings_delete on public.bookings for delete using (public.is_admin());
