@@ -1,8 +1,10 @@
 # Einsatzfahrzeug State Tracker
 
-Kleine App (PWA) für eine Einheit im Katastrophenschutz: Fahrzeuge erfassen, Fächer und Gegenstände auf Fotos markieren, Beladung per Check prüfen und den Verlauf einsehen. Läuft im Browser, auf dem iPhone als Home Bildschirm App, ohne App Store.
+Kleine App (PWA) für eine Einheit im Katastrophenschutz: Fahrzeuge erfassen, Fächer und Gegenstände auf Fotos markieren, Beladung per Check prüfen und den Verlauf einsehen. Läuft im Browser, auf iPhone und Android als Home Bildschirm App, ohne App Store. Eine Version für beide Systeme.
 
-**Stand:** Prototyp. Per Skript geprüft (Datenbankrechte und Bedienung mit einer Test Attrappe). **Noch nicht auf einem echten iPhone und noch nicht mit einer echten Supabase Datenbank getestet.**
+**Stand:** Prototyp. Per Skript geprüft: Datenbankrechte (lokales PostgreSQL), Bedienung in Chrome mit Pixel 7 Emulation (Android) und iPhone Fenstergröße. **Nicht getestet:** echtes iPhone (Safari), echtes Android Gerät, echte Supabase Datenbank.
+
+**Ausprobieren ohne Datenbank:** `start-lokal.bat` (Windows), `start-lokal.command` (Mac) oder `python3 start-lokal.py`. Siehe `docs/LOKAL_TESTEN.md`.
 
 ## Funktionen
 
@@ -19,9 +21,13 @@ Kleine App (PWA) für eine Einheit im Katastrophenschutz: Fahrzeuge erfassen, F�
 | `index.html`, `css/`, `js/` | Die App (reines HTML, CSS, JavaScript, kein Build nötig) |
 | `config.js` | Supabase URL und Publishable Key eintragen |
 | `sql/schema.sql` | Tabellen, Rechte (RLS), Foto Speicher |
+| `docs/LOKAL_TESTEN.md` | Testmodus ohne Datenbank, Test am Handy |
 | `docs/EINRICHTUNG.md` | Schritt für Schritt Einrichtung |
 | `docs/BEDIENUNG.md` | Anleitung für Admin und Prüfer |
 | `docs/UEBERGABE.md` | Übergabe an die Einheit, Pflege, Datenschutz |
+| `js/demo.js` | Testmodus (Speicher im Browser statt Supabase) |
+| `start-lokal.*` | Lokaler Start zum Ausprobieren |
+| `tests/` | Automatische Tests (Oberfläche, Datenbankrechte) |
 | `vendor/supabase.js` | Supabase Bibliothek (MIT Lizenz, Version 2.119.1) |
 
 ## Sicherheit in Kürze

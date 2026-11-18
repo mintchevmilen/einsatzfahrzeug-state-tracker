@@ -176,7 +176,9 @@ const STATUS = {
 // ======================================================================
 function shell(inner, active) {
   const admin = S.role === 'admin';
+  const demo = window.APP_CONFIG && window.APP_CONFIG.DEMO_MODE;
   return `
+  ${demo ? '<div class="demo">Testmodus. Die Daten bleiben nur in diesem Browser. <a href="?demo=reset">Zurücksetzen</a> <a href="?demo=empty">Leer starten</a> <a href="?demo=off">Beenden</a></div>' : ''}
   <header class="top">
     <div class="brand">${esc(S.org || 'Fahrzeug Check')}</div>
     <div class="who">${admin ? 'Admin' : esc(S.name || '')}</div>
@@ -206,9 +208,12 @@ function viewSetupMissing() {
 // ======================================================================
 function viewLogin() {
   const lastName = localStorage.getItem('lastName') || '';
+  const C = window.APP_CONFIG || {};
+  const DEMO = C.DEMO_MODE ? { code: C.DEMO_CODE, admin: C.DEMO_ADMIN } : null;
   return {
     html: `<main class="narrow">
       <h1>Fahrzeug Check</h1>
+      ${DEMO ? `<div class="banner demohint">Testmodus ohne Datenbank.<br>Prüfer: Code <strong>${esc(DEMO.code)}</strong>, Name frei.<br>Admin: <strong>${esc(DEMO.admin.email)}</strong> und Passwort <strong>${esc(DEMO.admin.password)}</strong>.</div>` : ''}
       <div class="seg"><button type="button" id="t-member" class="on">Prüfer</button><button type="button" id="t-admin">Admin</button></div>
       <form id="f-member" class="card pad">
         ${field('Einheitscode', 'code', { required: true, autocomplete: 'off', placeholder: 'Code von deinem Admin' })}

@@ -56,12 +56,13 @@ Der Publishable Key ist dafür gedacht. Geschützt sind die Daten durch die Rech
 3. Nach 1 bis 2 Minuten steht der Link oben auf der Seite, etwa
    `https://BENUTZER.github.io/einsatzfahrzeug-state-tracker/`.
 
-## 6. Auf dem iPhone installieren
+## 6. Auf dem Handy installieren (iPhone und Android, dieselbe App)
 
-1. Link in **Safari** öffnen.
-2. Teilen Symbol, "Zum Home-Bildschirm".
-3. Die App öffnet sich dann wie eine normale App, ohne App Store und ohne Apple Entwicklerkonto.
-   Android: Chrome, Menü, "App installieren".
+**iPhone:** Link in **Safari** öffnen, Teilen Symbol, "Zum Home-Bildschirm".
+**Android:** Link in **Chrome** öffnen, Menü (drei Punkte), "App installieren" (oder "Zum Startbildschirm hinzufügen").
+
+Die App öffnet sich dann wie eine normale App, ohne App Store, ohne Apple Entwicklerkonto und ohne Google Play.
+Wer sie nicht installiert, kann sie auch einfach im Browser nutzen.
 
 ## 7. Erster Test
 
