@@ -17,3 +17,11 @@
   4. Unter Actions "Sicherung" einmal von Hand starten und das Ergebnis pruefen.
 - Ergebnis: Artefakt `sicherung-<Nummer>` im privaten Repository, 90 Tage aufbewahrt, montags neu.
 - Fuer eine Wiederherstellung die JSON Dateien in ein neues Projekt einspielen. Einmal ueben.
+
+## GW San (BBK Beladung)
+
+Das Fahrzeug "GW San (BBK, MAN TGL 10.220)" wurde aus dem BBK Begleitheft importiert.
+Es hat 43 nummerierte Plätze mit Punkten auf dem Beladeplan, 33 Kisten und 2 Rucksack Typen.
+Das Bild liegt im Repo (`assets/gwsan/beladeplan.jpg`) und wird über den Pfad `static:` geladen.
+Neu erzeugen: `python3 tools/build_gwsan.py begleitheft.pdf data/gwsan_pins.json`.
+Import in die Datenbank: `sql/import_gwsan.sql` (läuft doppelt ohne Schaden).

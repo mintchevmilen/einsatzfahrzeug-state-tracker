@@ -198,7 +198,7 @@ function pinBox(url, pins, emptyText) {
         `<button type="button" class="pin ${p.cls || ''}" data-id="${p.id}" style="left:${p.x * 100}%;top:${p.y * 100}%">${esc(p.label)}</button>`
     )
     .join('');
-  return `<div class="pinbox" id="pinbox"><img id="pinimg" src="${esc(url)}" alt="Foto">${ps}</div>`;
+  return `<div class="pinbox${pins.length > 30 ? ' many' : ''}" id="pinbox"><img id="pinimg" src="${esc(url)}" alt="Foto">${ps}</div>`;
 }
 function bindPinBox({ onPin, onTap }) {
   const box = document.getElementById('pinbox');

@@ -262,6 +262,8 @@ const urlCache = new Map();
 const objUrls = new Map();
 export async function photoUrl(path) {
   if (!path) return null;
+  // Bilder, die fest zur App gehoeren (liegen im Repository, nicht im Speicher)
+  if (path.startsWith('static:')) return new URL(path.slice(7), document.baseURI).href;
   if (objUrls.has(path)) return objUrls.get(path);
   const blob = await blobGet('photos', path);
   if (blob) {
@@ -295,7 +297,7 @@ export async function uploadPhoto(prefix, blob) {
   return path;
 }
 export async function removePhoto(path) {
-  if (!path) return;
+  if (!path || path.startsWith('static:')) return;
   try {
     await sb.storage.from('photos').remove([path]);
   } catch (e) {
