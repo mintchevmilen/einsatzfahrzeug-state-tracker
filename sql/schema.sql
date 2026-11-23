@@ -33,6 +33,7 @@ create table if not exists public.vehicles (
   notes text,
   next_inspection date,
   photo_path text,
+  photos_extra jsonb not null default '[]'::jsonb,
   sort int not null default 0,
   created_at timestamptz not null default now()
 );
@@ -445,3 +446,6 @@ alter table public.usages add column if not exists fuel_end text check (fuel_end
 do $$ begin
   alter table public.usages add constraint usages_km_order check (km_end is null or km_start is null or km_end >= km_start);
 exception when duplicate_object then null; end $$;
+
+-- Weitere Fotos je Fahrzeug (Liste von Pfaden)
+alter table public.vehicles add column if not exists photos_extra jsonb not null default '[]'::jsonb;

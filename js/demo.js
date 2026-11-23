@@ -179,7 +179,7 @@
           const r = { id: uid(), created_at: new Date().toISOString(), ...p };
           if (table === 'items') { r.barcode = r.barcode ?? null; r.checklist_id = r.checklist_id ?? null; r.qty = r.qty ?? 1; r.x = r.x ?? null; r.y = r.y ?? null; r.note = r.note ?? null; }
           if (table === 'areas') { r.x = r.x ?? null; r.y = r.y ?? null; r.photo_path = r.photo_path ?? null; }
-          if (table === 'vehicles') { r.photo_path = r.photo_path ?? null; }
+          if (table === 'vehicles') { r.photo_path = r.photo_path ?? null; r.photos_extra = r.photos_extra ?? []; }
           if (table === 'checklists') { r.interval_days = r.interval_days ?? null; r.sort = r.sort ?? 0; }
           if (table === 'check_results') { r.resolved_status = r.resolved_status ?? 'open'; r.resolved_at = null; r.resolved_by = null; r.resolve_note = null; }
           if (table === 'usages') {

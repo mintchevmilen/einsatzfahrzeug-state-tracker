@@ -628,6 +628,8 @@ async function viewVehicle(id) {
   const [v, areas, lists, allChecks, openU, bookings] = await Promise.all([api.getVehicle(id), api.listAreas(id), api.listChecklists(id), api.lastChecks(), api.openUsages(), api.listBookings(new Date().toISOString())]);
   const itemsAll = await api.listItemsForAreas(areas.map((a) => a.id));
   const url = await api.photoUrl(v.photo_path);
+  const extra = Array.isArray(v.photos_extra) ? v.photos_extra : [];
+  const extraUrls = await Promise.all(extra.map((p) => api.photoUrl(p)));
   const admin = S.role === 'admin';
   const edit = admin && S.edit;
   const draft = getDraft(id);
@@ -712,6 +714,18 @@ async function viewVehicle(id) {
     : '';
   const movingBar = S.moving && S.moving.kind === 'area' ? `<div class="banner">Tippe auf das Foto, um die neue Position zu setzen. <button class="btn small" id="cancel-move">Abbrechen</button></div>` : '';
 
+  const galleryBox =
+    extra.length
+      ? `<div class="card pad"><h3>Weitere Fotos</h3><div class="gallery">${extra
+          .map(
+            (p, i) =>
+              `<div class="gitem">${extraUrls[i] ? `<a href="${esc(extraUrls[i])}" target="_blank" rel="noopener"><img src="${esc(extraUrls[i])}" alt="Foto ${i + 1}"></a>` : '<span class="muted">Foto nicht verfügbar</span>'}${
+                edit ? `<button class="btn small danger" data-xdel="${i}">Entfernen</button>` : ''
+              }</div>`
+          )
+          .join('')}</div></div>`
+      : '';
+
   const editPanel = edit
     ? `<div class="card pad editpanel">
         <div class="muted">Bearbeiten: Tippe auf das Foto, um ein Fach zu markieren. Tippe auf eine Nummer, um es zu ändern.</div>
@@ -720,6 +734,8 @@ async function viewVehicle(id) {
           <button class="btn" id="e-lists">Checklisten (${lists.length})</button>
           <button class="btn" id="e-photo-cam">${v.photo_path ? 'Neues Foto (Kamera)' : 'Foto aufnehmen'}</button>
           <button class="btn" id="e-photo-file">Foto aus Dateien</button>
+          <button class="btn" id="e-xphoto-cam">+ Weiteres Foto (Kamera)</button>
+          <button class="btn" id="e-xphoto-file">+ Weiteres Foto (Dateien)</button>
           <button class="btn" id="e-area">+ Fach ohne Markierung</button>
           <button class="btn danger" id="e-del">Fahrzeug löschen</button>
         </div></div>`
@@ -735,6 +751,7 @@ async function viewVehicle(id) {
       ${admin ? `<label class="switch"><input type="checkbox" id="edit-toggle" ${edit ? 'checked' : ''}><span>Bearbeiten</span></label>` : ''}
       ${movingBar}
       ${pinBox(url, pins, admin ? 'Noch kein Foto. Nimm ein Foto vom Fahrzeug auf.' : 'Kein Foto vorhanden')}
+      ${galleryBox}
       ${editPanel}
       ${checkBar}
       ${useBox}
@@ -905,6 +922,39 @@ async function viewVehicle(id) {
         }
         route();
       };
+      const addExtraPhoto = async (mode) => {
+        const f = await pickPhoto(mode);
+        if (!f) return;
+        busy(true);
+        try {
+          const path = await uploadFile(f, `vehicles/${id}`);
+          await api.saveVehicle({ id, photos_extra: [...extra, path] });
+          toast('Foto hinzugefügt');
+        } catch (e) {
+          fail(e);
+        } finally {
+          busy(false);
+        }
+        route();
+      };
+      on('e-xphoto-cam', () => addExtraPhoto('camera'));
+      on('e-xphoto-file', () => addExtraPhoto('file'));
+      document.querySelectorAll('[data-xdel]').forEach((b) =>
+        b.addEventListener('click', async () => {
+          if (!confirm('Dieses Foto entfernen?')) return;
+          const i = Number(b.dataset.xdel);
+          busy(true);
+          try {
+            await api.saveVehicle({ id, photos_extra: extra.filter((_, k) => k !== i) });
+            await api.removePhoto(extra[i]);
+          } catch (e) {
+            fail(e);
+          } finally {
+            busy(false);
+          }
+          route();
+        })
+      );
       on('e-photo-cam', () => setVehiclePhoto('camera'));
       on('e-photo-file', () => setVehiclePhoto('file'));
 
@@ -928,6 +978,7 @@ async function viewVehicle(id) {
         try {
           await api.deleteVehicle(id);
           await api.removePhoto(v.photo_path);
+          for (const x of extra) await api.removePhoto(x);
           for (const a of areas) await api.removePhoto(a.photo_path);
           clearDraft(id);
           location.hash = '#/';
